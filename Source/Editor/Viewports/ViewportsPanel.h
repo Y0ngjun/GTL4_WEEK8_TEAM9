@@ -1,72 +1,92 @@
 #pragma once
 
 #include "Editor/EditorUI/EditorPanel.h"
-#include "Editor/LevelEditor/MultipleViewports/Adapter/MultipleViewportsAdapterTypes.h"
-#include "Render/RenderingInfo.h"
-class FMultipleViewportsAdapter;
+#include "Editor/Viewports/EditorViewportClient.h"
+#include "Engine/Viewport.h"
+
+class FGameViewportClient;
+class FWindow;
+
+// 생성 시 고정하는 슬롯 구성. Quad 한 슬롯 최대화는 별도 표시 상태다.
+enum class EViewportPanelLayout { Quad, Single };
+
+struct FViewportSplitRatio
+{
+    float Horizontal = 0.5f;
+    float Vertical = 0.5f;
+};
+enum class EViewportSplitAxis { Horizontal, Vertical };
 
 class FViewportsPanel : public IEditorPanel
 {
 public:
-	// View 표시 모드를 편집할 Adapter를 연결한다. 엔진이 수명을 보장한다.
-	void SetViewportAdapter(FMultipleViewportsAdapter* Value) { ViewportAdapter = Value; }
-	// 네 View의 렌더 타깃과 UI 제어 상태를 초기화한다.
+    explicit FViewportsPanel(EViewportPanelLayout InLayout = EViewportPanelLayout::Quad);
+    static constexpr int32 InvalidSlotIndex = -1;
+    int32 GetSlotCount() const { return Slots.Num(); }
+    void SetHostWindow(FWindow* Window) { HostWindow = Window; }
+    FViewport* GetViewport(int32 Index) const { return Index >= 0 && Index < GetSlotCount() ? Slots[Index].Viewport.get() : nullptr; }
+    const FRect& GetSlotRect(int32 Index) const { return Slots[Index].Rect; }
+    FRect GetContentRect() const;
+    FVector2 ToViewportLocal(int32 Index, FVector2 WindowMousePosition) const;
+    void RouteInput(int32 Index, FViewportInput Input);
+    void ReleaseInput(int32 Index);
+    void Shutdown();
+	// 구성에 맞는 고정 Viewport만 만든다. Client 종류는 구성 호출자가 선택한다.
 	bool Init() override;
-	// 프레임 입력에서 Splitter Drag와 View별 UI 요청을 수집한다.
+	// IEditorPanel 프레임 인터페이스. 입력 전달과 레이아웃 갱신은 Engine이 조정한다.
 	void Tick(float DeltaTime) override;
 	// 각 View Texture와 Splitter·Layout·Preset 조작 UI를 ImGui 패널에 그린다.
 	void OnRender() override;
 	const char* GetPanelName() const override { return "Viewports"; }
 
-	// Core가 계산한 View Rect에 맞춰 해당 Slot의 활성 상태와 렌더 타깃을 갱신한다.
-	void SetView(int32 ViewIndex, const FRect& Rect, bool bActive);
-	// 화면 표시용(sRGB) 렌더 정보. 후처리 이후의 FXAA·Overlay가 그린다.
-	const FRenderingInfo& GetRenderingInfo(int32 ViewIndex) const;
-	// 씬(Linear, float) 렌더 정보. 불투명·반투명·안개가 그린다.
-	const FRenderingInfo& GetSceneRenderingInfo(int32 ViewIndex) const;
-	// 씬용·표시용 렌더 정보를 같은 깊이 타깃으로 구성한다. PIE 창 타깃도 같은 구성을 쓴다.
-	static void BuildViewRenderingInfos(FRenderingInfo& OutSceneInfo, FRenderingInfo& OutViewInfo,
-		FTexture2D* SceneColor, FTexture2D* ViewColor, FTexture2D* Depth, uint32 Width, uint32 Height);
-	// FXAA 결과를 임시로 받는 View별 텍스처. ColorTarget과 크기·포맷이 같다.
-	FTexture2D* GetFxaaTarget(int32 ViewIndex) const;
+    FEditorViewportClient* GetEditorClient(int32 Index) const;
+    FGameViewportClient* GetGameViewportClient(int32 Index) const;
+    FViewportClient* GetActiveClient(int32 Index) const;
+	void SetSlotMaximized(bool bMaximized) { bSlotMaximized = PanelLayout == EViewportPanelLayout::Quad && bMaximized; }
+	bool IsSlotMaximized() const { return bSlotMaximized; }
+	void SetMaximizedSlotIndex(int32 Index);
+	int32 GetMaximizedSlotIndex() const { return MaximizedSlotIndex; }
+	void SetSplitRatio(const FViewportSplitRatio& Value);
+	const FViewportSplitRatio& GetSplitRatio() const { return SplitRatio; }
+	void UpdateLayout(const FRect& Area);
+	void ApplySplitterDrag(EViewportSplitAxis Axis, float DeltaPixels, FVector2 WindowSize);
+	void UpdateInputSelection(FVector2 WindowMousePosition);
+	int32 GetPointerViewIndex(FVector2 WindowMousePosition) const;
+	int32 GetActiveViewIndex() const { return ActiveViewIndex; }
+	int32 GetEditorViewIndex() const { return bSlotMaximized ? MaximizedSlotIndex : EditorViewIndex; }
+	void SetEditorViewIndex(int32 Index) { if (Index >= 0 && Index < GetSlotCount()) EditorViewIndex = Index; }
+	int32 GetCapturedViewIndex() const { return CapturedViewIndex; }
+	bool IsViewActive(int32 Index) const { const auto* Viewport = GetViewport(Index); return Viewport && Viewport->IsVisible(); }
 
 	FVector2 GetContentSize() const { return {ContentSize.x, ContentSize.y}; }
-	FVector2 GetLocalMousePosition() const;
+	FVector2 GetWindowMousePosition() const;
 	bool IsHovered() const;
 
 	float ConsumeHorizontalDrag();
 	float ConsumeVerticalDrag();
-	// Core의 현재 Layout과 View별 Preset을 UI 표시 상태에 동기화한다.
-	void SetControlState(ELayoutMode LayoutMode, int32 SingleViewIndex, const EMultipleViewportsCameraPreset CameraPresets[4]);
-	// UI에서 발생한 Layout 변경 요청을 한 번 소비하도록 반환한다.
-	bool ConsumeLayoutRequest(ELayoutMode& OutMode, int32& OutSingleViewIndex);
+	// UI에서 발생한 Quad 최대화/복귀 요청을 한 번 소비한다.
+	bool ConsumeMaximizeRequest(bool& OutMaximized, int32& OutSlotIndex);
 	// UI에서 발생한 View별 Camera Preset 요청을 한 번 소비하도록 반환한다.
-	bool ConsumeCameraPresetRequest(int32& OutViewIndex, EMultipleViewportsCameraPreset& OutPreset);
+	bool ConsumeCameraPresetRequest(int32& OutViewIndex, EViewportCameraPreset& OutPreset);
 
 private:
-	FMultipleViewportsAdapter* ViewportAdapter = nullptr;
-	struct FViewSlot
-	{
-		// View 하나의 Rect·활성 상태·Color/Depth 타깃과 렌더 정보를 담는다.
-		FRect Rect{};
-		bool bActive = false;
-		uint32 Width = 0;
-		uint32 Height = 0;
-		// 씬은 Linear로 SceneColorTarget(float)에 그리고, 인코딩한 결과를 ColorTarget(sRGB 8비트)에 담아 화면에 표시한다
-		TUniquePtr<FTexture2D> SceneColorTarget;
-		TUniquePtr<FTexture2D> ColorTarget;
-		TUniquePtr<FTexture2D> DepthTarget;
-		TUniquePtr<FTexture2D> FxaaTarget;
-		FRenderingInfo SceneRenderingInfo{};	// SceneColorTarget + DepthTarget
-		FRenderingInfo RenderingInfo{};			// ColorTarget + DepthTarget
-	};
-
-	// Rect 크기가 바뀐 Slot의 Color/Depth Texture와 렌더 정보를 다시 만든다.
-	void ResizeSlot(FViewSlot& Slot, uint32 Width, uint32 Height);
+    struct FSlot
+    {
+        FRect Rect{}; // 해당 창의 client 영역 기준. 배치 좌표의 단일 원본.
+        TUniquePtr<FViewport> Viewport;
+    };
+    TArray<FSlot> Slots; // 생성 시 한 번 크기를 정하며 Slot-Viewport 연결은 바꾸지 않는다.
+    const EViewportPanelLayout PanelLayout;
+    FWindow* HostWindow = nullptr; // Engine 소유.
+	FViewportSplitRatio SplitRatio{};
+	int32 CapturedViewIndex = InvalidSlotIndex;
+	int32 ActiveViewIndex = InvalidSlotIndex;
+	int32 EditorViewIndex = 0;
+	static constexpr float MinimumSplitRatio = 0.1f;
+    void ComputeQuadLayout(FVector2 WindowSize);
 	// 콘솔 stat 명령으로 켜진 항목을 해당 View의 좌상단에 겹쳐 그린다.
 	void DrawStatOverlay(ImDrawList* DrawList, const ImVec2& ViewMin) const;
 
-	FViewSlot Slots[4]{};
 	ImVec2 ContentOrigin{};
 	ImVec2 ContentSize{1.0f, 1.0f};
 	bool bHovered = false;
@@ -78,12 +98,11 @@ private:
 	// 누른 뒤 커서가 Splitter 영역을 벗어나도 버튼을 놓을 때까지 드래그를 유지한다.
 	bool bDraggingVerticalSplitter = false;
 	bool bDraggingHorizontalSplitter = false;
-	ELayoutMode CurrentLayoutMode = ELayoutMode::QuadSplit;
-	int32 CurrentSingleViewIndex = 0;
-	EMultipleViewportsCameraPreset CurrentCameraPresets[4]{};
-	bool bHasLayoutRequest = false;
-	ELayoutMode RequestedLayoutMode = ELayoutMode::QuadSplit;
-	int32 RequestedSingleViewIndex = 0;
-	int32 PendingCameraPresetViewIndex = InvalidViewIndex;
-	EMultipleViewportsCameraPreset PendingCameraPreset = EMultipleViewportsCameraPreset::Perspective;
+	bool bSlotMaximized = false;
+	int32 MaximizedSlotIndex = 0;
+	bool bHasMaximizeRequest = false;
+	bool bRequestedMaximized = false;
+	int32 RequestedMaximizedSlotIndex = 0;
+	int32 PendingCameraPresetViewIndex = InvalidSlotIndex;
+	EViewportCameraPreset PendingCameraPreset = EViewportCameraPreset::Perspective;
 };

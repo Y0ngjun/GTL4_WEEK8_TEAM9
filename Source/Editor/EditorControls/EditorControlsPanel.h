@@ -12,7 +12,7 @@
 #include "GameFramework/Actor/PointLightActor.h"
 #include "GameFramework/Actor/SpotLightActor.h"
 
-class FMultipleViewportsAdapter;
+class FViewportsPanel;
 
 // 액터 생성과 카메라·기즈모 편집에 필요한 패널 상태를 보관한다.
 class FEditorControlsPanel : public IEditorPanel
@@ -56,14 +56,14 @@ public:
 		ASpotLightActor::StaticClass()
 	};
 
-    void SetViewportAdapter(FMultipleViewportsAdapter* InAdapter) { ViewportAdapter = InAdapter; }
+    void SetViewportsPanel(FViewportsPanel* InPanel) { ViewportsPanel = InPanel; }
 
 private:
 	static constexpr float SectionGap = 10.0f;
 	static constexpr float SubsectionGap = 4.0f;
 
     void DrawCameraProperties();
-    FMultipleViewportsAdapter* ViewportAdapter = nullptr;
+    FViewportsPanel* ViewportsPanel = nullptr;
 	std::function<bool()> IsPlayingQuery;
 
 };

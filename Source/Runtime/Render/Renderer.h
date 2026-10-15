@@ -73,7 +73,7 @@ public:
 	// 기존 단일 카메라의 ViewProjection으로 렌더 큐 전체를 그린다.
 	void RenderAll(FRenderQueue& InQueue, UCameraComponent* CameraComponent);
 
-	// Adapter가 계산한 ViewProjection을 직접 받아 View별 렌더 큐를 그린다.
+	// SceneView의 ViewProjection을 직접 받아 View별 렌더 큐를 그린다.
 	void RenderAll(FRenderQueue& InQueue, const FMatrix& ViewProjection, const FVector& CameraPosition);
 
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "UObject/Class.h"
+#include "Camera/CameraProjection.h"
 #include "../Component/SceneComponent.h"
 #include "../Math/EngineMath.h"
 #include "../Math/Rotator.h"
@@ -20,7 +21,11 @@ public:
 	FMatrix GetViewMatrix() const;
 	FMatrix GetPerspectiveMatrix() const;
 	FMatrix GetOrthogonalMatrix() const;
+	FCameraProjection GetProjectionSettings() const;
 	FMatrix GetProjectionMatrix() const;
+	FMatrix GetProjectionMatrix(float ViewAspectRatio) const;
+	// CameraComponent와 SceneView가 공유하는 역투영. 원근은 논리 위치, 직교는 렌더 위치를 전달한다.
+	static FRay DeprojectView(const FMatrix& View, const FMatrix& Projection, const FVector& Origin, FVector2 MousePos, FVector2 ViewSize, bool bOrthographic);
 	FMatrix GetViewProjectionMatrix() const;
 
 	// Picking
@@ -54,7 +59,7 @@ public:
 
 	float GetWheelSpeed() const { return WheelSpeed; }
 	void SetWheelSpeed(float InWheelSpeed) { WheelSpeed = InWheelSpeed; }
-	// 외부 Adapter가 View별 입력을 처리할 때 기본 카메라의 중복 입력 갱신을 끈다.
+	// 뷰포트 클라이언트가 View별 입력을 처리할 때 기본 카메라의 중복 입력 갱신을 끈다.
 	void SetExternalInputManaged(bool bValue) { bExternalInputManaged = bValue; }
 	bool IsExternalInputManaged() const { return bExternalInputManaged; }
 

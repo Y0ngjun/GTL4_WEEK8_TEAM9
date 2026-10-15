@@ -53,3 +53,6 @@ void FWorldContext::SetCurrentWorld(UWorld* World)
 {
 	ThisCurrentWorld = World;
 }
+
+FWorldContext::FWorldContext() : WorldType(EWorldType::None), ContextHandle(NAME_None) {}
+FWorldContext::~FWorldContext() = default;

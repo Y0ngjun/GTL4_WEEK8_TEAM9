@@ -22,12 +22,13 @@ struct FWorldContext
 		return ThisCurrentWorld;
 	}
 
-	FWorldContext()
-		: WorldType(EWorldType::None)
-		, ContextHandle(NAME_None)
-		, ThisCurrentWorld(nullptr)
-	{
-	}
+	FWorldContext();
+	~FWorldContext();
+	// WorldList는 포인터만 이동한다. 세션 자체의 복사/이동은 허용하지 않는다.
+	FWorldContext(const FWorldContext&) = delete;
+	FWorldContext& operator=(const FWorldContext&) = delete;
+	FWorldContext(FWorldContext&&) = delete;
+	FWorldContext& operator=(FWorldContext&&) = delete;
 
 private:
 	UWorld* ThisCurrentWorld = nullptr;
