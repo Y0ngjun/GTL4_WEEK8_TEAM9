@@ -158,6 +158,8 @@ float3 DiffuseTerm(float3 Il, float3 N, float3 L)
     return Il * max(dot(N, L), 0.0f);
 }
 
+#include "ShadowCommon.hlsli"
+
 // Phong: A(R), B(V) Blinn-Phong: A(N), B(H)
 float3 SpecularTerm(float3 Il, float3 A, float3 B, float n)
 {
@@ -433,7 +435,13 @@ float4 mainPS(FPSInput Input) : SV_TARGET
         return float4(Color, 1.0f);
     }
     
-    float3 DiffuseLight;
+    if (bHasDirectionalShadow)
+    {
+        float3 ShadowCoord = ProjectToShadowMap(Input.WorldPosition, DirectionalShadowViewProjection);
+        return float4(ShadowCoord.xy, 0.0f, 1.0f);
+    }
+    
+        float3 DiffuseLight;
     float3 SpecularLight;
 #if SHADING_MODEL == SHADING_MODEL_GOURAUD
     DiffuseLight = Input.DiffuseLight;
