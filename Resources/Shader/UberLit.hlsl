@@ -282,7 +282,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #else
         float GeoFactor = 1.0f;
 #endif
-        AccumulateLight(Il * GeoFactor, N, L, V, n, DiffuseLight, SpecularLight);
+        float Shadow = GetDirectionalShadow(WorldPosition);
+        AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }
 
     // Opaque 깊이 기반 타일 목록은 반투명에 필요한 라이트를 누락할 수 있어
@@ -433,12 +434,6 @@ float4 mainPS(FPSInput Input) : SV_TARGET
         }
 
         return float4(Color, 1.0f);
-    }
-    
-    if (bHasDirectionalShadow)
-    {
-        float3 ShadowCoord = ProjectToShadowMap(Input.WorldPosition, DirectionalShadowViewProjection);
-        return float4(ShadowCoord.xy, 0.0f, 1.0f);
     }
     
         float3 DiffuseLight;
