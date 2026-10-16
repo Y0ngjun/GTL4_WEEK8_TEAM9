@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Render/RenderPacket.h"
+#include "Render/TileLightCulling.h"
+#include "Render/LightInfo.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
 
 class UStaticMeshComponent;
@@ -15,6 +17,9 @@ struct FParticleSortInput
 struct FSceneRenderData
 {
     FRenderQueue RenderQueue;
+    TArray<FPointLightInfo> PointLights;
+    TArray<FSpotLightInfo> SpotLights;
+    TArray<FCullingLight> CullingLights;
     TArray<uint32> VisibleIds;
     TArray<UStaticMeshComponent*> PendingStaticMeshes;
     TArray<FLODSelectionInput> LODInputs;
@@ -25,6 +30,9 @@ struct FSceneRenderData
     void ResetFrame()
     {
         ReleaseSceneReferences();
+        PointLights.Reset();
+        SpotLights.Reset();
+        CullingLights.Reset();
         VisibleIds.Reset();
         SelectedLODs.Reset();
         SortInputs.Reset();

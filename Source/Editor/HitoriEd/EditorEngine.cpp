@@ -540,7 +540,7 @@ FWorldContext* UEditorEngine::GetPIEWorldContext(int32 WorldPIEInstance)
 }
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
-void UEditorEngine::RenderOpaquePass(const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, FRenderQueue& RenderQueue, const FDirectionalLightInfo& DirectionalLight)
+void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, FRenderQueue& RenderQueue, const FDirectionalLightInfo& DirectionalLight)
 {
 	const FMatrix& ViewProjection = View.ViewProjection;
 	const FVector ViewCameraLocation = View.GetCameraLocation();
@@ -549,18 +549,30 @@ void UEditorEngine::RenderOpaquePass(const FRenderingInfo& ViewRenderingInfo, co
 	// 뷰 모드가 셰이더 permutation을, Wireframe 여부가 Fill Mode를 정한다. 삼각형 연결은 그대로다.
 	const FViewRenderMode ViewRenderMode = View.RenderMode;
 	const bool bVisualizeLightCount = SettingsPanel->GetSettings().bVisualizeTileLightCount;
-	if (ViewRenderMode.ViewMode == EViewMode::Lit)
-	{
-		Renderer->EnsureTileLightCapacity(ViewProjection, ViewRenderingInfo.ViewportSetting.Width, ViewRenderingInfo.ViewportSetting.Height, bVisualizeLightCount);
-	}
+    const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
+    const bool bDepthPrepass = bDrawPrimitives && ViewRenderMode.ViewMode == EViewMode::Lit;
+    Renderer->SetViewMode(ViewRenderMode);
+    if (bDrawPrimitives)
+        Renderer->RenderQueueSorting(RenderQueue, ViewProjection, ViewCameraLocation);
+    if (bDepthPrepass)
+    {
+        FRenderingInfo DepthInfo = ViewRenderingInfo;
+        DepthInfo.ColorRenderTargets.Reset();
+        RenderCommand::BeginRenderPass(DepthInfo);
+        RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+        RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        Renderer->RenderDepthPrepass(ViewProjection);
+        RenderCommand::EndRenderPass(DepthInfo);
+        Renderer->CullLights(Viewport.GetLightCullingResources(), View.ProjectionMatrix, DepthInfo.DepthStencil.Texture, Viewport.GetSceneRenderData().CullingLights, DepthInfo.ViewportSetting.Width, DepthInfo.ViewportSetting.Height, bVisualizeLightCount);
+    }
 
 	// 배경은 화면에서 sRGB 0.3 회색으로 보여야 한다. Linear 작업 흐름에서는 인코딩될 것이므로 디코딩해 지운다.
 	FRenderingInfo PassInfo = ViewRenderingInfo;
 	const float ClearValue = ColorWorkflow::bLinear ? FLinearColor::SRGBToLinear(0.3f) : 0.3f;
 	PassInfo.ColorRenderTargets[0].ClearValue.ColorClearValue = FVector4(ClearValue, ClearValue, ClearValue, 1.0f);
+    if (bDepthPrepass) PassInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
 	RenderCommand::BeginRenderPass(PassInfo);
 
-	const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
 	const ERasterizerState SceneRasterizerState = ViewRenderMode.ViewMode == EViewMode::Wireframe
 		? ERasterizerState::Wireframe : ERasterizerState::SolidBack;
 
@@ -579,11 +591,9 @@ void UEditorEngine::RenderOpaquePass(const FRenderingInfo& ViewRenderingInfo, co
 		RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 		RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		Renderer->SetViewMode(ViewRenderMode);
 		// 불투명을 먼저 그리고 반투명을 먼 것부터 그린다.
 		// Grid는 깊이를 쓰지 않는 반투명 위에도 겹칠 수 있지만, 언리얼의 에디터 프리미티브처럼 Overlay Pass에서 마지막에 합성한다.
-		Renderer->RenderQueueSorting(RenderQueue, ViewProjection, ViewCameraLocation);
-		Renderer->RenderOpaque(ViewProjection);
+		Renderer->RenderOpaque(ViewProjection, bDepthPrepass);
 		Renderer->RenderTranslucent(ViewProjection);
 		// 장면 Wireframe이 Grid·Gizmo·UI로 전파되지 않도록 복원한다.
 		RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
@@ -591,6 +601,8 @@ void UEditorEngine::RenderOpaquePass(const FRenderingInfo& ViewRenderingInfo, co
 
 
 	RenderCommand::EndRenderPass(PassInfo);
+    RenderCommand::UnbindShaderResources(8, 4, EShaderBindFlagBits::Pixel);
+    RenderCommand::UnbindShaderResources(8, 2, EShaderBindFlagBits::Vertex);
 }
 
 void UEditorEngine::RenderFogPass(UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation, const FMatrix& ViewProjection, FRenderQueue& RenderQueue)
@@ -863,15 +875,14 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	const FVector ViewCameraLocation = View.GetCameraLocation();
 	const FVector ViewCameraForward = View.GetCameraForward();
 	FLightingConstants Lighting;
-	TArray<FPointLightInfo> PointLights;
-	TArray<FSpotLightInfo> SpotLights;
+	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
 	ViewWorld.GetScene().BuildLightingConstants(Lighting);
-	ViewWorld.GetScene().BuildStructuredLight(PointLights, SpotLights);
-	Renderer->SetLighting(Lighting, PointLights, SpotLights);
+	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
+	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
-	RenderOpaquePass(SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
+	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
 
 	if (SettingsPanel->GetSettings().bDepthView)
 	{

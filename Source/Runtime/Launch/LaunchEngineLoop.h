@@ -66,6 +66,7 @@ private:
 	FEngineConfig Config;
 
 	bool bIsRunning = false;
+	bool bEngineInitialized = false;
 
 	FFrameStats FrameStats;
 	uint64 PrevFrameCycles = 0;

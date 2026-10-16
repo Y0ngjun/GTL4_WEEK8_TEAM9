@@ -288,29 +288,29 @@ void FScene::MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy)
 	RenderStateDirtyProxies.Add(Proxy);
 }
 
-void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight) const
+void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix) const
 {
-	OutPointLight.Reset();
-	OutSpotLight.Reset();
-
-	for (FLightSceneProxy* Proxy : Lights)
-	{
-		if (!Proxy->IsVisible())
-		{
-			continue;
-		}
-
-		switch (Proxy->GetLightType())
-		{
-		case ELightType::Point:
-			OutPointLight.Add(static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo());
-			break;
-		case ELightType::Spot:
-			OutSpotLight.Add(static_cast<FSpotLightSceneProxy*>(Proxy)->GetInfo());
-			break;
-		default:
-			break;
-		}
-	}
-
+    OutPointLight.Reset();
+    OutSpotLight.Reset();
+    OutCullingLights.Reset();
+    // 같은 프록시/수집 조건에서 Point 다음 Spot 순서로 셰이딩 배열과 구를 함께 생성한다.
+    for (ELightType Type : {ELightType::Point, ELightType::Spot})
+    {
+        for (FLightSceneProxy* Proxy : Lights)
+        {
+            if (!Proxy->IsVisible() || Proxy->GetLightType() != Type) continue;
+            if (Type == ELightType::Point)
+            {
+                const FPointLightInfo& Info = static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
+                OutPointLight.Add(Info);
+                OutCullingLights.Add({ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius});
+            }
+            else
+            {
+                const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);
+                OutSpotLight.Add(Spot->GetInfo());
+                OutCullingLights.Add({ViewMatrix.TransformPosition(Spot->GetCullingSphereCenter()), Spot->GetCullingSphereRadius()});
+            }
+        }
+    }
 }

@@ -25,6 +25,7 @@ public:
     FSceneRenderData& GetSceneRenderData() { return SceneRenderData; }
     const FRenderingInfo& GetRenderingInfo() const { return ViewTargets.RenderingInfo; }
     const FRenderingInfo& GetSceneRenderingInfo() const { return ViewTargets.SceneRenderingInfo; }
+    FTileLightCullingResources& GetLightCullingResources() { return ViewTargets.LightCulling; }
     FTexture2D* GetFxaaTarget() const { return ViewTargets.FxaaTarget.get(); }
     FTexture2D* GetColorTarget() const { return ViewTargets.ColorTarget.get(); }
 

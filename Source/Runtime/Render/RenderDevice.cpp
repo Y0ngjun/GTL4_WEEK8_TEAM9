@@ -214,6 +214,9 @@ void FRenderDevice::CreateStates()
 		Desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
 		Device->CreateDepthStencilState(&Desc, DepthStencilStates[(uint8)EDepthStencilState::ReadOnly].GetAddressOf());
 
+        Desc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+        Device->CreateDepthStencilState(&Desc, DepthStencilStates[(uint8)EDepthStencilState::ReadOnlyLessEqual].GetAddressOf());
+        Desc.DepthFunc = D3D11_COMPARISON_LESS;
 		Desc.DepthEnable = FALSE;
 		Device->CreateDepthStencilState(&Desc, DepthStencilStates[(uint8)EDepthStencilState::Disabled].GetAddressOf());
 
@@ -284,4 +287,50 @@ void FRenderDevice::CreateStates()
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::LinearWrap].GetAddressOf());
 	}
+}
+
+TUniquePtr<FBuffer> FRenderDevice::CreateBuffer(const D3D11_BUFFER_DESC& Desc, const void* InitialData)
+{
+	return MakeUnique<FBuffer>(Device.Get(), Desc, InitialData);
+}
+
+TUniquePtr<FStructuredBuffer> FRenderDevice::CreateStructuredBuffer(uint32 ElementCount, uint32 ElementStride, D3D11_USAGE Usage, bool bAllowUAV, const void* InitialData)
+{
+	if (Usage != D3D11_USAGE_DEFAULT && Usage != D3D11_USAGE_DYNAMIC)
+	{
+		HTR_LOG(Error, "[StructuredBuffer] unsupported usage");
+		return nullptr;
+	}
+
+	if (Usage == D3D11_USAGE_DYNAMIC && bAllowUAV)
+	{
+		HTR_LOG(Error, "[StructuredBuffer] dynamic buffer cannot allow UAV");
+		return nullptr;
+	}
+
+	const uint64 ByteWidth = static_cast<uint64>(ElementCount) * ElementStride;
+	if (ByteWidth > (std::numeric_limits<uint32>::max)())
+	{
+		HTR_LOG(Error, "[StructuredBuffer] byte size exceeds uint32 range");
+		return nullptr;
+	}
+
+	D3D11_BUFFER_DESC Desc{};
+	Desc.ByteWidth = static_cast<uint32>(ByteWidth);
+	Desc.Usage = Usage;
+	Desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	Desc.CPUAccessFlags = Usage == D3D11_USAGE_DYNAMIC ? D3D11_CPU_ACCESS_WRITE : 0;
+	Desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+	Desc.StructureByteStride = ElementStride;
+
+	if (bAllowUAV)
+		Desc.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
+
+	return MakeUnique<FStructuredBuffer>(Device.Get(), Desc, InitialData);
+}
+
+TUniquePtr<FComputeShader> FRenderDevice::CreateComputeShader(const FShaderByteCode& ByteCode)
+{
+	TUniquePtr<FComputeShader> CS = MakeUnique<FComputeShader>(Device.Get(), ByteCode);
+	return CS;
 }

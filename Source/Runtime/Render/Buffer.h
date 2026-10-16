@@ -52,3 +52,13 @@ public:
 private:
 
 };
+
+class FStructuredBuffer : public FBuffer
+{
+public:
+	FStructuredBuffer(ID3D11Device* Device, const D3D11_BUFFER_DESC& Desc, const void* InitialData = nullptr);
+	~FStructuredBuffer() override = default;
+
+private:
+
+};

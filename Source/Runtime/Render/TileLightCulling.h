@@ -1,58 +1,60 @@
 #pragma once
 
+#include "Core/Types.h"
+#include "Math/Vector.h"
+#include "Math/Matrix.h"
 #include "Render/Buffer.h"
+#include <d3d11.h>
+#include <wrl/client.h>
 
-#include "Render/LightInfo.h"
-#include "Containers/Array.h"
-#include "LocalLight.h"
+inline constexpr uint32 LIGHT_CULLING_TILE_SIZE = 64;   // tile = 64x64
 
-struct FTileLightCullingConstants
+struct FCullingLight
 {
-    FMatrix InverseViewProjection;
-    uint32 ScreenWidth;
-    uint32 ScreenHeight;
-    uint32 TileCountX;
-    uint32 TileCountY;
-    uint32 NumPointLights;
-    uint32 NumSpotLights;
-    uint32 PointTileStride;
-    uint32 SpotTileStride;
-    uint32 bVisualizeLightCount;
-    uint32 Padding[3];
+    FVector SphereCenter;
+    float Radius = 0.0f;
 };
+
+struct FTileCullingConstants
+{
+    uint32 ViewSize[2] = {};
+    uint32 TileCountX = 0;
+    uint32 LightCount = 0;
+
+    FMatrix Projection;
+
+    uint32 MaxLightsPerTile = 0;
+    uint32 TileSize = LIGHT_CULLING_TILE_SIZE;
+    uint32 Padding[2] = {};
+};
+
+
+class FShaderProgram;
+class FTexture2D;
+struct FTileLightCullingResources;
+
 
 class FTileLightCulling
 {
 public:
-    void Init();
-    void Dispatch(const FLocalLight& Lights, const FMatrix& ViewProjection, uint32 Width, uint32 Height, bool bVisualizeLightCount);
-    void BindForShading(const FLocalLight& Lights);
-    void UnbindForShading();
-    
-    bool EnsureTileCapacity(uint32 Width, uint32 Height);
-    ID3D11ShaderResourceView* GetPointTileListSRV() const { return PointTileListSRV.Get(); }
-    ID3D11ShaderResourceView* GetSpotTileListSRV() const { return SpotTileListSRV.Get(); }
-    uint32 GetTileCountX() const { return TileCountX; }
-    uint32 GetTileCountY() const { return TileCountY; }
-
+    bool Init();
+    bool Execute(FTileLightCullingResources& Resources, const uint32 ViewWidth, const uint32 ViewHeight, const FMatrix& Projection, FTexture2D* Depth, const FCullingLight* Lights, const uint32 LightCount);
 private:
-    bool CreatePointTileList(ID3D11Device* Device, uint32 TileCapacity);
-    bool CreateSpotTileList(ID3D11Device* Device, uint32 TileCapacity);
-    void ReleaseTileLists();
+    void UploadInputs(FTileLightCullingResources& Resources, const FCullingLight* Lights, const FTileCullingConstants& Constants);
 
-    TUniquePtr<FConstantBuffer> CullingConstantBuffer;
+    FShaderProgram* ComputeShader = nullptr;
 
-    ComPtr<ID3D11ComputeShader> CullLightsCS;
+    // 타일 컬링 상수를 업로드할 버퍼
+    TUniquePtr<FConstantBuffer> ConstantsBuffer;
 
-    ComPtr<ID3D11Buffer> PointTileListBuffer;
-    ComPtr<ID3D11ShaderResourceView> PointTileListSRV;
-    ComPtr<ID3D11UnorderedAccessView> PointTileListUAV;
-
-    ComPtr<ID3D11Buffer> SpotTileListBuffer;
-    ComPtr<ID3D11ShaderResourceView> SpotTileListSRV;
-    ComPtr<ID3D11UnorderedAccessView> SpotTileListUAV;
-
-    uint32 TileCountX = 0;
-    uint32 TileCountY = 0;
-    uint32 TileCapacity = 0;
+    const uint32 MaxLightsPerTile = 64;         // 이 값은 tile size와 관련없이 임의로 정할 수 있는 값이다
 };
+
+
+
+static_assert(sizeof(FCullingLight) == 16);
+static_assert(offsetof(FCullingLight, Radius) == 12);
+
+static_assert(sizeof(FTileCullingConstants) == 96);
+static_assert(offsetof(FTileCullingConstants, Projection) == 16);
+static_assert(offsetof(FTileCullingConstants, MaxLightsPerTile) == 80);

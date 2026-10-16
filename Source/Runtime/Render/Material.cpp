@@ -22,6 +22,18 @@ namespace
 	}
 }
 
+void UMaterial::SetBlendState(EBlendState InBlendState)
+{
+	BlendState = InBlendState;
+	if (ParamLayout == EMaterialParamLayout::StaticMesh)
+	{
+		if (BlendState == EBlendState::Opaque)
+			DepthStencilState = EDepthStencilState::Default;
+		else if (BlendState == EBlendState::AlphaBlend)
+			DepthStencilState = EDepthStencilState::ReadOnly;
+	}
+}
+
 UMaterial* UMaterial::CreateInstance(const UMaterial* Source)
 {
 	if (Source == nullptr)
@@ -34,8 +46,8 @@ UMaterial* UMaterial::CreateInstance(const UMaterial* Source)
 	Instance->ParamLayout = Source->ParamLayout;
 	Instance->Shader = Source->Shader;
 	Instance->Textures = Source->Textures;
-	Instance->BlendState = Source->BlendState;
 	Instance->DepthStencilState = Source->DepthStencilState;
+	Instance->SetBlendState(Source->BlendState);
 	Instance->SamplerState = Source->SamplerState;
 	Instance->BaseColor = Source->BaseColor;
 	Instance->UVScrollSpeed = Source->UVScrollSpeed;
@@ -111,7 +123,10 @@ UMaterial* UMaterial::LoadMaterial(const json& In)
 {
 	if (In.contains("Asset"))
 	{
-		return UAssetManager::GetAssetByPath<UMaterial>(In["Asset"].get<FString>());
+		UMaterial* Material = UAssetManager::GetAssetByPath<UMaterial>(In["Asset"].get<FString>());
+		if (Material)
+			Material->SetBlendState(Material->BlendState);
+		return Material;
 	}
 
 	UMaterial* Base = nullptr;
@@ -168,7 +183,7 @@ UMaterial* UMaterial::LoadMaterial(const json& In)
 	if (In.contains("BlendState"))
 	{
 		const FString State = In["BlendState"].get<FString>();
-		Instance->BlendState = State == "AlphaBlend" ? EBlendState::AlphaBlend : EBlendState::Opaque;
+		Instance->SetBlendState(State == "AlphaBlend" ? EBlendState::AlphaBlend : EBlendState::Opaque);
 	}
 
 	return Instance;
@@ -188,7 +203,11 @@ void UMaterial::SerializeMaterialReference(FStructuredArchive::FSlot Slot, UMate
 		FString Path = Ar.IsSaving() ? Material->GetPath() : FString();
 		AssetSlot.GetValue() << Path;
 		if (Ar.IsLoading())
+		{
 			Material = UAssetManager::GetAssetByPath<UMaterial>(Path);
+			if (Material)
+				Material->SetBlendState(Material->BlendState);
+		}
 		return;
 	}
 
@@ -246,7 +265,7 @@ void UMaterial::Serialize(FStructuredArchive::FRecord Record)
 	FString Blend = BlendState == EBlendState::AlphaBlend ? "AlphaBlend" : "Opaque";
 	Record << SA_VALUE("BlendState", Blend);
 	if (Ar.IsLoading())
-		BlendState = Blend == "AlphaBlend" ? EBlendState::AlphaBlend : EBlendState::Opaque;
+		SetBlendState(Blend == "AlphaBlend" ? EBlendState::AlphaBlend : EBlendState::Opaque);
 
 	// 텍스처: 경로 문자열 배열. 없는 칸은 빈 문자열
 	int32 Num = Textures.Num();

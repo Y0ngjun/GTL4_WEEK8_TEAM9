@@ -1,237 +1,99 @@
 #include "EnginePCH.h"
-
-#include "RenderCommand.h"
 #include "TileLightCulling.h"
-#include "RenderUtil.h"
+#include "Render/RenderCommand.h"
+#include "Render/RenderResourceManager.h"
+#include "TileLightCullingResources.h"
 
-namespace
+bool FTileLightCulling::Init()
 {
-	constexpr uint32 TileSize = 16;
-	constexpr uint32 MaxPointLightsPerTile = 64;
-	constexpr uint32 MaxSpotLightsPerTile = 64;
-	constexpr uint32 PointTileStride = MaxPointLightsPerTile + 1;
-	constexpr uint32 SpotTileStride = MaxSpotLightsPerTile + 1;
+    ComputeShader = nullptr;
+    ConstantsBuffer.reset();
+
+    FShaderProgram* LoadedShader = FRenderResourceManager::FindShaderProgram("Resources/Shader/CS_TileLightCulling.hlsl");
+
+    if (!LoadedShader || !LoadedShader->ComputeShader || !LoadedShader->ComputeShader->IsValid())
+    {
+        HTR_LOG(Error, "[TileLightCulling] required compute program unavailable or invalid: Resources/Shader/CS_TileLightCulling.hlsl");
+        return false;
+    }
+
+    ConstantsBuffer = RenderCommand::CreateConstantBuffer(sizeof(FTileCullingConstants));
+
+    if (!ConstantsBuffer || !ConstantsBuffer->GetBuffer())
+    {
+        HTR_LOG(Error, "[TileLightCulling] constant buffer creation failed");
+        ConstantsBuffer.reset();
+        return false;
+    }
+
+    ComputeShader = LoadedShader;
+    return true;
 }
 
-void FTileLightCulling::Init()
+bool FTileLightCulling::Execute(FTileLightCullingResources& Resources, const uint32 ViewWidth, const uint32 ViewHeight, const FMatrix& Projection, FTexture2D* Depth, const FCullingLight* Lights, const uint32 LightCount)
 {
-	CullingConstantBuffer = RenderCommand::CreateConstantBuffer(sizeof(FTileLightCullingConstants));
+    if (ViewWidth == 0 || ViewHeight == 0 || !ComputeShader || !ConstantsBuffer || !Depth)
+        return false;
 
-	FString CSOPath;
-	FShaderByteCode ByteCode = RenderUtil::GetOrCompile("Resources/Shader/TileLightCulling.hlsl", "mainCS", EShaderType::Compute, CSOPath);
+    // 화면 타일 크기는 스레드 그룹 크기와 독립적이다.
+    constexpr uint32 TileSize = LIGHT_CULLING_TILE_SIZE;
 
-	if (!ByteCode.IsValid())
-	{
-		HTR_LOG(Error, "TileLightCulling shader compile failed");
-		return;
-	}
+    const uint32 TileCountX = ViewWidth / TileSize + (ViewWidth % TileSize != 0);
+    const uint32 TileCountY = ViewHeight / TileSize + (ViewHeight % TileSize != 0);
 
-	ID3D11Device* Device = RenderCommand::GetDevice();
-	if (FAILED(Device->CreateComputeShader(ByteCode.GetData(), ByteCode.GetSize(), nullptr, CullLightsCS.GetAddressOf())))
-	{
-		HTR_LOG(Error, "TileLightCulling shader creation failed");
-		return;
-	}
-}
+    if (!Resources.EnsureCapacity(TileCountX, TileCountY, LightCount, MaxLightsPerTile))
+        return false;
 
-void FTileLightCulling::Dispatch(const FLocalLight& Lights, const FMatrix& ViewProjection, uint32 Width, uint32 Height, bool bVisualizeLightCount)
-{
-	if (!CullingConstantBuffer || !CullLightsCS || !PointTileListUAV || !SpotTileListUAV)
-		return;
+    FTileCullingConstants Constants{};
+    Constants.ViewSize[0] = ViewWidth;
+    Constants.ViewSize[1] = ViewHeight;
+    Constants.TileCountX = TileCountX;
+    Constants.LightCount = LightCount;
+    Constants.Projection = Projection;
+    Constants.MaxLightsPerTile = MaxLightsPerTile;
 
-	// 이전 View에서 PS가 읽던 TileList를 이번 Dispatch의 UAV로 다시 쓰기 전에 해제한다.
-	UnbindForShading();
+    UploadInputs(Resources, Lights, Constants);
 
-	FTileLightCullingConstants Constants{};
-	Constants.InverseViewProjection = ViewProjection.Inverse();
-	Constants.ScreenWidth = Width;
-	Constants.ScreenHeight = Height;
-	Constants.TileCountX = TileCountX;
-	Constants.TileCountY = TileCountY;
-	Constants.NumPointLights = Lights.GetNumPointLights();
-	Constants.NumSpotLights = Lights.GetNumSpotLights();
-	Constants.PointTileStride = PointTileStride;
-	Constants.SpotTileStride = SpotTileStride;
-	Constants.bVisualizeLightCount = bVisualizeLightCount ? 1u : 0u;
-	RenderCommand::UpdateBufferData(CullingConstantBuffer.get(), &Constants);
-	RenderCommand::BindConstantBuffer(0, CullingConstantBuffer.get(), EShaderBindFlagBits::Compute);
+    // CS_TileLightCulling.hlsl에 선언된 레지스터 번호
+    constexpr uint32 ConstantsSlot = 0;    // b0
+    constexpr uint32 LightSpheresSlot = 0; // t0
+    constexpr uint32 DepthSlot = 1;        // t1
+    constexpr uint32 LightCountSlot = 0;   // u0
+    constexpr uint32 LightIndicesSlot = 1; // u1
 
-	ID3D11DeviceContext* Context = RenderCommand::GetContext();
+    RenderCommand::BindShaderProgram(ComputeShader);
+    RenderCommand::BindConstantBuffer(ConstantsSlot, ConstantsBuffer.get(), EShaderBindFlagBits::Compute);
+    RenderCommand::BindShaderResource(LightSpheresSlot, Resources.LightSpheresSRV.Get(), EShaderBindFlagBits::Compute);
 
-	Context->CSSetShader(CullLightsCS.Get(), nullptr, 0);
+    RenderCommand::BindShaderResource(DepthSlot, Depth, EShaderBindFlagBits::Compute);
 
-	ID3D11ShaderResourceView* LightSRVs[2] = { Lights.GetPointLightSRV(), Lights.GetSpotLightSRV() };
-	Context->CSSetShaderResources(0, 2, LightSRVs);
+    RenderCommand::BindComputeUAV(LightCountSlot, Resources.TileLightCountUAV.Get());
+    RenderCommand::BindComputeUAV(LightIndicesSlot, Resources.TileLightIndicesUAV.Get());
 
-	ID3D11UnorderedAccessView* LightUAVs[2] = { PointTileListUAV.Get(), SpotTileListUAV.Get()};
-	Context->CSSetUnorderedAccessViews(0, 2, LightUAVs, nullptr);
+    // 타일 하나당 스레드 그룹 하나를 실행
+    // 타일 배치는 2차원이므로 Z는 1
+    RenderCommand::Dispatch(TileCountX, TileCountY, 1);
 
-	Context->Dispatch(TileCountX, TileCountY, 1);
+    // 후속 렌더링에서 결과를 SRV로 읽을 수 있도록 UAV 연결을 해제
+    RenderCommand::BindComputeUAV(LightCountSlot, nullptr);
+    RenderCommand::BindComputeUAV(LightIndicesSlot, nullptr);
 
-	ID3D11Buffer* NullBuffer = nullptr;
-
-	ID3D11ShaderResourceView* NullSRVs[2] = {};
-	ID3D11UnorderedAccessView* NullUAVs[2] = {};
-	Context->CSSetShaderResources(0, 2, NullSRVs);
-	Context->CSSetUnorderedAccessViews(0, 2, NullUAVs, nullptr);
-	Context->CSSetConstantBuffers(0, 1, &NullBuffer);
-	Context->CSSetShader(nullptr, nullptr, 0);
-
-	BindForShading(Lights);
-}
-
-void FTileLightCulling::BindForShading(const FLocalLight& Lights)
-{
-	ID3D11ShaderResourceView* SRVs[4] = {
-		Lights.GetPointLightSRV(),
-		Lights.GetSpotLightSRV(),
-		PointTileListSRV.Get(),
-		SpotTileListSRV.Get()
-	};
-	RenderCommand::GetContext()->PSSetShaderResources(8, 4, SRVs);
-	RenderCommand::BindConstantBuffer(4, CullingConstantBuffer.get(), EShaderBindFlagBits::Pixel);
-}
-
-void FTileLightCulling::UnbindForShading()
-{
-	ID3D11ShaderResourceView* NullSRVs[4] = {};
-	ID3D11Buffer* NullBuffer = nullptr;
-	ID3D11DeviceContext* Context = RenderCommand::GetContext();
-	Context->PSSetShaderResources(8, 4, NullSRVs);
-	Context->PSSetConstantBuffers(4, 1, &NullBuffer);
+    // 이번 실행에서 사용한 입력 슬롯도 해제
+    RenderCommand::UnbindShaderResources(LightSpheresSlot, 2, EShaderBindFlagBits::Compute);
+    RenderCommand::BindConstantBuffer(ConstantsSlot, nullptr, EShaderBindFlagBits::Compute);
+    return true;
 }
 
 
-bool FTileLightCulling::EnsureTileCapacity(uint32 Width, uint32 Height)
+void FTileLightCulling::UploadInputs(FTileLightCullingResources& Resources, const FCullingLight* Lights, const FTileCullingConstants& Constants)
 {
-	TileCountX = (Width + TileSize - 1) / TileSize;
-	TileCountY = (Height + TileSize - 1) / TileSize;
+    // 라이트가 없으면 입력 배열 복사는 생략
+    if (Constants.LightCount > 0)
+    {
+        const uint32 DataSize = Constants.LightCount * static_cast<uint32>(sizeof(FCullingLight));
+        RenderCommand::UpdateBufferData(Resources.LightSpheres.get(), Lights, DataSize);
+    }
 
-	uint32 RequiredTileCount = TileCountX * TileCountY;
-
-	const bool bResourcesValid = 
-		PointTileListBuffer && PointTileListSRV && PointTileListUAV 
-		&& SpotTileListBuffer && SpotTileListSRV && SpotTileListUAV;
-
-	if (RequiredTileCount <= TileCapacity && bResourcesValid)
-	{
-		return true;
-	}
-
-	uint32 NewCapacity = std::max(TileCapacity, 1024u);
-	while (NewCapacity < RequiredTileCount)
-	{
-		NewCapacity *= 2;
-	}
-
-	ID3D11Device* Device = RenderCommand::GetDevice();
-
-	ReleaseTileLists();
-	if (!CreatePointTileList(Device, NewCapacity) || !CreateSpotTileList(Device, NewCapacity))
-	{
-		ReleaseTileLists();
-		return false;
-	}
-
-	TileCapacity = NewCapacity;
-	return true;
-}
-
-bool FTileLightCulling::CreatePointTileList(ID3D11Device* Device, uint32 TileCapacity)
-{
-	uint32  PointElementCount = TileCapacity * PointTileStride;
-
-	D3D11_BUFFER_DESC BufferDesc{};
-	BufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	BufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-	BufferDesc.CPUAccessFlags = 0;
-	BufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-	BufferDesc.ByteWidth = PointElementCount * sizeof(uint32);
-	BufferDesc.StructureByteStride = sizeof(uint32);
-	if (FAILED(Device->CreateBuffer(&BufferDesc, nullptr, PointTileListBuffer.GetAddressOf())))
-	{
-		return false;
-	}
-
-	D3D11_UNORDERED_ACCESS_VIEW_DESC UAVDesc{};
-	UAVDesc.Format = DXGI_FORMAT_UNKNOWN;
-	UAVDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-	UAVDesc.Buffer.FirstElement = 0;
-	UAVDesc.Buffer.NumElements = PointElementCount;
-	UAVDesc.Buffer.Flags = 0;
-	if (FAILED(Device->CreateUnorderedAccessView(PointTileListBuffer.Get(), &UAVDesc, PointTileListUAV.GetAddressOf())))
-	{
-		PointTileListBuffer.Reset();
-		return false;
-	}
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
-	SRVDesc.Format = DXGI_FORMAT_UNKNOWN;
-	SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-	SRVDesc.Buffer.FirstElement = 0;
-	SRVDesc.Buffer.NumElements = PointElementCount;
-	if (FAILED(Device->CreateShaderResourceView(PointTileListBuffer.Get(), &SRVDesc, PointTileListSRV.GetAddressOf())))
-	{
-		PointTileListUAV.Reset();
-		PointTileListBuffer.Reset();
-		return false;
-	}
-
-	return true;
-}
-
-bool FTileLightCulling::CreateSpotTileList(ID3D11Device* Device, uint32 TileCapacity)
-{
-	uint32 SpotElementCount = TileCapacity * SpotTileStride;
-
-	D3D11_BUFFER_DESC BufferDesc{};
-	BufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	BufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
-	BufferDesc.CPUAccessFlags = 0;
-	BufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-	BufferDesc.ByteWidth = SpotElementCount * sizeof(uint32);
-	BufferDesc.StructureByteStride = sizeof(uint32);
-	if (FAILED(Device->CreateBuffer(&BufferDesc, nullptr, SpotTileListBuffer.GetAddressOf())))
-	{
-		return false;
-	}
-
-	D3D11_UNORDERED_ACCESS_VIEW_DESC UAVDesc{};
-	UAVDesc.Format = DXGI_FORMAT_UNKNOWN;
-	UAVDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
-	UAVDesc.Buffer.FirstElement = 0;
-	UAVDesc.Buffer.NumElements = SpotElementCount;
-	UAVDesc.Buffer.Flags = 0;
-	if (FAILED(Device->CreateUnorderedAccessView(SpotTileListBuffer.Get(), &UAVDesc, SpotTileListUAV.GetAddressOf())))
-	{
-		SpotTileListBuffer.Reset();
-		return false;
-	}
-
-	D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
-	SRVDesc.Format = DXGI_FORMAT_UNKNOWN;
-	SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-	SRVDesc.Buffer.FirstElement = 0;
-	SRVDesc.Buffer.NumElements = SpotElementCount;
-	if (FAILED(Device->CreateShaderResourceView(SpotTileListBuffer.Get(), &SRVDesc, SpotTileListSRV.GetAddressOf())))
-	{
-		SpotTileListUAV.Reset();
-		SpotTileListBuffer.Reset();
-		return false;
-	}
-
-	return true;
-}
-
-void FTileLightCulling::ReleaseTileLists()
-{
-	PointTileListBuffer.Reset();
-	PointTileListSRV.Reset();
-	PointTileListUAV.Reset();
-
-	SpotTileListBuffer.Reset();
-	SpotTileListSRV.Reset();
-	SpotTileListUAV.Reset();
-
-	TileCapacity = 0;
+    // 라이트가 없어도 LightCount = 0을 포함한 현재 뷰의 상수는 갱신
+    RenderCommand::UpdateBufferData(ConstantsBuffer.get(), &Constants);
 }

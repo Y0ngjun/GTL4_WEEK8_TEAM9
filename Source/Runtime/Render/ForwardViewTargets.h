@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Render/RenderingInfo.h"
+#include "Render/TileLightCullingResources.h"
 
 // 기존 Forward 경로의 linear 씬 컬러와 수동 인코딩 표시 컬러를 한 뷰가 소유한다.
 struct FForwardViewTargets
@@ -11,6 +12,7 @@ struct FForwardViewTargets
 	TUniquePtr<FTexture2D> FxaaTarget;
 	FRenderingInfo SceneRenderingInfo{};
 	FRenderingInfo RenderingInfo{};
+	FTileLightCullingResources LightCulling;
 	uint32 Width = 0;
 	uint32 Height = 0;
 

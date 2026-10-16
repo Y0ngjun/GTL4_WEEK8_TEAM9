@@ -8,6 +8,8 @@ class UTexture2D;
 class FShaderProgram;
 class FVertexShader;
 class FPixelShader;
+class FComputeShader;
+class FStructuredBuffer;
 struct FRenderingInfo;
 
 enum class EShaderBindFlagBits : uint32
@@ -42,12 +44,19 @@ public:
 
 	static TUniquePtr<FVertexShader> CreateVertexShader(const FShaderByteCode& ByteCode);
 	static TUniquePtr<FPixelShader> CreatePixelShader(const FShaderByteCode& ByteCode);
+	static TUniquePtr<FComputeShader> CreateComputeShader(const FShaderByteCode& ByteCode);
+	static TUniquePtr<FBuffer> CreateBuffer(const D3D11_BUFFER_DESC& Desc, const void* InitialData = nullptr);
+	static TUniquePtr<FStructuredBuffer> CreateStructuredBuffer(uint32 ElementCount, uint32 ElementStride, D3D11_USAGE Usage, bool bAllowUAV, const void* InitialData = nullptr);
 
 	static void BindPipelineState(const FPipelineState& PipelineState);
 
 	static void BindMesh(UStaticMesh* Mesh, uint32 LODIndex = 0);
 
 	static void BindShaderProgram(FShaderProgram* Shader);
+	static void BindComputeUAV(uint32 Slot, ID3D11UnorderedAccessView* UAV);
+	static void Dispatch(uint32 GroupCountX, uint32 GroupCountY, uint32 GroupCountZ);
+	static void BindShaderResource(uint32 Slot, ID3D11ShaderResourceView* SRV, EShaderBindFlagBits FlagBits);
+	static void UnbindShaderResources(uint32 Slot, uint32 Count, EShaderBindFlagBits FlagBits);
 
 	static void Draw(uint32 VertexCount, uint32 StartIndexLocation = 0);
 	static void DrawIndexed(uint32 IndexCount, uint32 StartIndexLocation = 0, int32 BaseVertexLocation = 0);

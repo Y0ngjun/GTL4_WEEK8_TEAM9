@@ -72,8 +72,14 @@ bool FEngineLoop::PreInit(HINSTANCE hInstance, UClass* EngineClass)
 	RenderDevice = MakeUnique<FRenderDevice>();
 	RenderCommand::Init(RenderDevice.get());
 
+	FRenderResourceManager::Init();
 	Renderer = MakeUnique<FRenderer>();
-	Renderer->Init();
+	if (!Renderer->Init())
+	{
+		HTR_LOG(Error, "[Startup] required renderer initialization failed; aborting before engine initialization and rendering");
+		FSplashScreen::Hide();
+		return false;
+	}
 
 	MainWindow = MakeUnique<FWindow>();
 	if (!MainWindow->Create(hInstance, Width, Height, Config.Title, Config.bBorderless))
@@ -89,7 +95,6 @@ bool FEngineLoop::PreInit(HINSTANCE hInstance, UClass* EngineClass)
 	}
 
 	FSplashScreen::SetText(L"Loading Assets...");
-	FRenderResourceManager::Init();
 
 	constexpr float AssetStart = 0.1f;
 	constexpr float AssetEnd = 0.8f;
@@ -107,6 +112,8 @@ bool FEngineLoop::PreInit(HINSTANCE hInstance, UClass* EngineClass)
 		return false;
 	}
 
+	bEngineInitialized = true;
+	HTR_LOG(Info, "[Startup] engine initialization complete");
 	FSplashScreen::SetProgress(1.0f);
 	FSplashScreen::Hide();
 
@@ -169,10 +176,12 @@ void FEngineLoop::Exit()
 	FTaskPool::Get().Shutdown();
 
 
-	if (GEngine)
+	// Renderer 실패 시 편집 UI/Panel은 아직 생성되지 않았다.
+	if (GEngine && bEngineInitialized)
 	{
 		GEngine->PreExit();
 	}
+	bEngineInitialized = false;
 
 	// UAssetManager도 UObject이므로 일괄 삭제 전에 종료한다.
 	UAssetManager::Shutdown();

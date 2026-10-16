@@ -39,3 +39,8 @@ FIndexBuffer::FIndexBuffer(ID3D11Device* Device, const D3D11_BUFFER_DESC& Desc, 
 {
 	IndexCount = Count;
 }
+
+FStructuredBuffer::FStructuredBuffer(ID3D11Device* Device, const D3D11_BUFFER_DESC& Desc, const void* InitialData)
+	: FBuffer(Device, Desc, InitialData)
+{
+}

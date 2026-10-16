@@ -677,7 +677,7 @@ namespace
 								Override = EnsureMaterialOverride(MeshComponent, Slot, Effective, Override);
 								if (Override)
 								{
-									Override->BlendState = static_cast<EBlendState>(i);
+									Override->SetBlendState(static_cast<EBlendState>(i));
 									Effective = Override;
 								}
 							}

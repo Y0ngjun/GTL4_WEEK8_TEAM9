@@ -43,6 +43,7 @@ void FViewport::EndPlay()
         return;
     GameClient->SetInputEnabled(false);
     ClearSceneData();
+    ViewTargets.LightCulling.Reset();
     // 선택의 영역: 현재는 PIE 종료 시 보존된 편집 표시 설정으로 복귀한다. PIE에서 변경한 표시 모드를 유지하기로 결정하면 아래 Game → Editor 복사를 활성화하고, 편집 설정 저장 정책도 함께 검토한다.
     // if (EditorClient) EditorClient->SetViewRenderMode(GameClient->GetViewRenderMode());
     ActiveClient = EditorClient.get();

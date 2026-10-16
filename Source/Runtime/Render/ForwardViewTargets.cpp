@@ -54,6 +54,7 @@ void FForwardViewTargets::BuildViewRenderingInfos(FRenderingInfo& OutSceneInfo, 
 
 void FForwardViewTargets::Reset()
 {
+	LightCulling.Reset();
 	SceneRenderingInfo = {};
 	RenderingInfo = {};
 	SceneColorTarget.reset();

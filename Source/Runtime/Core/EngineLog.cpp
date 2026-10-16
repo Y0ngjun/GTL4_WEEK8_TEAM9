@@ -26,6 +26,12 @@ void FLog::RemoveSink(ILogSink* Sink)
 
 void FLog::Emit(ELogVerbosity Verbosity, const FString& Message)
 {
+    // 편집기 로그 패널 생성 전 시작 실패도 디버거에서 확인할 수 있게 한다.
+    if (GetSinks().IsEmpty())
+    {
+        OutputDebugStringA(Message.c_str());
+        OutputDebugStringA("\n");
+    }
     for (ILogSink* Sink : GetSinks())
         Sink->OnLog(Verbosity, Message);
 }

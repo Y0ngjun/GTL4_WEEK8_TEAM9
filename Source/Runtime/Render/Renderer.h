@@ -61,14 +61,15 @@ struct FOcclusionMeasureResult
 	uint32 FalseCulls = 0;        // 그중 실제로는 픽셀이 보인 드로우 수. 0이어야 한다
 };
 
+enum class ESceneMeshPass : uint8 { Color, DepthPrepass, OpaqueAfterPrepass };
+
 class FRenderer
 {
 public:
 	bool Init();
 
 	void SetViewMode(const FViewRenderMode& Mode);
-	void SetLighting(const FLightingConstants& GlobalLights,
-		const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights);
+	void SetLighting(const FLightingConstants& GlobalLights, const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights);
 
 	// 기존 단일 카메라의 ViewProjection으로 렌더 큐 전체를 그린다.
 	void RenderAll(FRenderQueue& InQueue, UCameraComponent* CameraComponent);
@@ -77,7 +78,8 @@ public:
 	void RenderAll(FRenderQueue& InQueue, const FMatrix& ViewProjection, const FVector& CameraPosition);
 
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.
-	void RenderOpaque(const FMatrix& ViewProjection);
+	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
+	void RenderDepthPrepass(const FMatrix& ViewProjection);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -101,7 +103,7 @@ public:
 	uint8* BeginObjectConstants(uint32 MaxSlots);
 	void EndObjectConstants();
 
-	void EnsureTileLightCapacity(const FMatrix& ViewProjection, uint32 Width, uint32 Height, bool bVisualizeLightCount);
+	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
 private:
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
@@ -112,6 +114,8 @@ private:
 	TUniquePtr<FConstantBuffer> PerObjectCB;
 	TUniquePtr<FConstantBuffer> ViewCB;
 	TUniquePtr<FConstantBuffer> LightingCB;
+	TUniquePtr<FConstantBuffer> TileShadingCB;
+	FShaderProgram* DepthShader = nullptr;
 
 	// 모든 패킷의 World 행렬을 256바이트 칸에 한 번에 올린 버퍼. D3D11.1 오프셋 바인딩을 못 쓰면 PerObjectCB로 돌아간다.
 	TUniquePtr<FConstantBuffer> PerObjectSlotCB;
@@ -132,13 +136,13 @@ private:
 	FLocalLight LocalLight;
 	FTileLightCulling TileLightCulling;
 
-	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection);
-	void DrawStaticGroups();
+	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color);
+	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
 
 	// 이번 프레임 스태틱 메시 묶음 (정렬 키 순). 비어 있지 않은 것만 담는다.
 	std::vector<const FStaticDrawGroup*> StaticGroups;
-	void BindMaterial(UMaterial* material);
+	void BindMaterial(UMaterial* material, ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void UpdateMaterialParams(const FRenderPacket& RenderPacket);
 	void UpdatePerObjectConstants(const FRenderPacket& RenderPacket, const FMatrix& ViewProjection);
 	void EnsurePerObjectSlotCapacity(uint32 SlotCount);

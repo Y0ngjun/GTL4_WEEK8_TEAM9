@@ -98,11 +98,35 @@ public:
 	{
 		const USpotLightComponent* Light = static_cast<const USpotLightComponent*>(Component);
 		Info = Light->GetSpotLightInfo();
+        // Outer cone과 감쇠 반경으로 제한된 조명 범위를 감싸는 구를 계산한다.
+        if (CachedRadius != Info.AttenuationRadius || CachedCosOuter != Info.CosOuterCone)
+        {
+            CachedRadius = Info.AttenuationRadius;
+            CachedCosOuter = Info.CosOuterCone;
+            if (Info.CosOuterCone >= std::cos(PI / 4.0f))
+            {
+                SphereOffset = Info.AttenuationRadius / (2.0f * Info.CosOuterCone);
+                CullingSphereRadius = SphereOffset;
+            }
+            else
+            {
+                SphereOffset = Info.AttenuationRadius * Info.CosOuterCone;
+                CullingSphereRadius = Info.AttenuationRadius * std::sqrt(1.0f - Info.CosOuterCone * Info.CosOuterCone);
+            }
+        }
+        CullingSphereCenter = Info.Position + Info.Direction * SphereOffset;
 		bVisible = Light->IsLightVisible();
 	}
 
 	const FSpotLightInfo& GetInfo() const { return Info; }
+    const FVector& GetCullingSphereCenter() const { return CullingSphereCenter; }
+    float GetCullingSphereRadius() const { return CullingSphereRadius; }
 
 private:
 	FSpotLightInfo Info;
+    FVector CullingSphereCenter{};
+    float CullingSphereRadius = 0.0f;
+    float SphereOffset = 0.0f;
+    float CachedRadius = -1.0f;
+    float CachedCosOuter = -2.0f;
 };

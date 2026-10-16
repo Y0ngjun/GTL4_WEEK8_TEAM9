@@ -22,6 +22,8 @@ public:
 
 	static void Shutdown();
 
+	// 필수 렌더 자원용 엄격한 조회. 없으면 nullptr이며 DefaultShader로 대체하지 않는다.
+	static FShaderProgram* FindShaderProgram(const FString& InPath);
 	static FShaderProgram* GetShaderProgram(const FString& InPath);
 	static FShaderProgram* GetUberLitProgram(const FViewRenderMode& Mode, bool bHasNormalMap);
 private:
@@ -31,5 +33,6 @@ private:
 
 	TMap<FString, TUniquePtr<FVertexShader>> VertexShaderMap;
 	TMap<FString, TUniquePtr<FPixelShader>>  PixelShaderMap;
+	TMap<FString, TUniquePtr<FComputeShader>> ComputeShaderMap;
 	TMap<FString, TUniquePtr<FShaderProgram>> ShaderProgramMap;
 }; 

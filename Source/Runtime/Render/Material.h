@@ -63,6 +63,9 @@ public:
 	// 인스턴스가 복제된 원본. 인스턴스는 경로가 없어서, 저장할 때 원본을 따라가 기준 에셋을 찾는다
 	const UMaterial* Parent = nullptr;
 
+	// ParamLayout을 정한 뒤 호출한다. StaticMesh의 기본 Blend/depth만 동기화하며 패스별 GPU 상태는 Renderer가 선택한다.
+	void SetBlendState(EBlendState InBlendState);
+
 	// Source의 내용을 복사한 편집용 복제본을 만든다
 	static UMaterial* CreateInstance(const UMaterial* Source);
 

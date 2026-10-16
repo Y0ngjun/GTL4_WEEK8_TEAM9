@@ -22,7 +22,6 @@ void FRenderResourceManager::ScanShaders(const fs::path& ShaderRoot)
 		if (!Entry.is_regular_file()) continue;
 		if (Entry.path().extension() != ".hlsl") continue;
 		if (Entry.path().filename() == "UberLit.hlsl") continue;
-		if (Entry.path().filename() == "TileLightCulling.hlsl") continue;
 
 		FString Path = Entry.path().generic_string();
 		LoadOrCompileShader(Path);
@@ -33,13 +32,21 @@ void FRenderResourceManager::Shutdown()
 {
 	Get().VertexShaderMap.Empty();
 	Get().PixelShaderMap.Empty();
+	Get().ComputeShaderMap.Empty();
 	Get().ShaderProgramMap.Empty();
+}
+
+FShaderProgram* FRenderResourceManager::FindShaderProgram(const FString& InPath)
+{
+	if (TUniquePtr<FShaderProgram>* Found = Get().ShaderProgramMap.Find(InPath))
+		return Found->get();
+	return nullptr;
 }
 
 FShaderProgram* FRenderResourceManager::GetShaderProgram(const FString& InPath)
 {
-	if (TUniquePtr<FShaderProgram>* Found = Get().ShaderProgramMap.Find(InPath))
-		return Found->get();
+	if (FShaderProgram* Found = FindShaderProgram(InPath))
+		return Found;
 
 	HTR_LOG(Error, "[Shader] not found: {}", InPath);
 
@@ -53,6 +60,27 @@ FShaderProgram* FRenderResourceManager::GetShaderProgram(const FString& InPath)
 void FRenderResourceManager::LoadOrCompileShader(const FString& Path, const FString& PermutationSuffix, const D3D_SHADER_MACRO* Defines)
 {
 	const FString Key = Path + PermutationSuffix;
+	if (fs::path(Path).filename().generic_string().starts_with("CS_"))
+	{
+		FString CSCSOPath;
+		FShaderByteCode CSCode = RenderUtil::GetOrCompile(Path, "mainCS", EShaderType::Compute, CSCSOPath, PermutationSuffix, Defines);
+		if (!CSCode.IsValid())
+		{
+			HTR_LOG(Error, "[Shader] compile failed: {}", Key);
+			return;
+		}
+		TUniquePtr<FComputeShader> Cs = RenderCommand::CreateComputeShader(CSCode);
+		if (!Cs || !Cs->IsValid())
+		{
+			HTR_LOG(Error, "[Shader] device create failed: {}", Key);
+			return;
+		}
+		FComputeShader* CsRaw = Cs.get();
+		ComputeShaderMap[CSCSOPath] = std::move(Cs);
+		ShaderProgramMap[Key] = MakeUnique<FShaderProgram>(CsRaw);
+		HTR_LOG(Info, "[Shader] loaded: {}", Key);
+		return;
+	}
 
 	FString VSCSOPath;
 	FString PSCSOPath;

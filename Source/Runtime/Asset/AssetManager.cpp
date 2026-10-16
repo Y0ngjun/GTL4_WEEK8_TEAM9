@@ -91,11 +91,7 @@ namespace
 			Material->SpecularColor = Slot.SpecularColor;
 			// OBJ UV는 0~1 밖으로 반복(타일링)되는 경우가 많아 Wrap으로 샘플링한다
 			Material->SamplerState = ESamplerState::LinearWrap;
-			if (Material->BaseColor.A < 1.0f)
-			{
-				Material->BlendState = EBlendState::AlphaBlend;
-				Material->DepthStencilState = EDepthStencilState::ReadOnly;
-			}
+			Material->SetBlendState(Material->BaseColor.A < 1.0f ? EBlendState::AlphaBlend : EBlendState::Opaque);
 
 			if (!Slot.DiffuseTexturePath.empty())
 			{
@@ -332,6 +328,7 @@ void UAssetManager::CreateDefaultMaterial()
 	 //DefaultMat->Textures.Add(GetAssetByPath<UTexture2D>("FlatNormalTexture"));
 
 	DefaultMat->ParamLayout = EMaterialParamLayout::StaticMesh;
+	DefaultMat->SetBlendState(EBlendState::Opaque);
 	DefaultMat->ParamBuffer = RenderCommand::CreateConstantBuffer(sizeof(FStaticMeshMaterialParams));
 	RegisterAsset("DefaultMaterial", DefaultMat);
 }

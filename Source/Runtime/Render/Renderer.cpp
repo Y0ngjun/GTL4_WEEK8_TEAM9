@@ -11,6 +11,7 @@
 #include "RenderCommand.h"
 #include "RenderResourceManager.h"
 #include "ColorWorkflow.h"
+#include "TileLightCullingResources.h"
 
 #include "Camera/CameraComponent.h"
 
@@ -25,10 +26,29 @@ DECLARE_CYCLE_STAT("Upload Per-Object CB", STAT_UploadPerObjectCB);
 
 namespace
 {
+    struct FTileLightShadingConstants
+    {
+        uint32 TileCountX = 0;
+        uint32 TileCountY = 0;
+        uint32 TileSize = LIGHT_CULLING_TILE_SIZE;
+        uint32 MaxLightsPerTile = 64;
+        uint32 PointCount = 0;
+        uint32 SpotCount = 0;
+        uint32 bVisualizeLightCount = 0;
+        uint32 bUseTileList = 0;
+    };
+    static_assert(sizeof(FTileLightShadingConstants) == 32);
+    static_assert(offsetof(FTileLightShadingConstants, PointCount) == 16);
+
 	// VSSetConstantBuffers1의 오프셋은 16개 상수(256바이트) 단위여야 하므로 오브젝트마다 256바이트 칸을 쓴다.
 	constexpr uint32 PerObjectSlotConstants = 16;
 
 	constexpr uint32 MinPerObjectSlots = 1024;
+
+    bool UsesDepthPrepass(const UMaterial* Material)
+    {
+        return Material->ParamLayout == EMaterialParamLayout::StaticMesh && Material->BlendState == EBlendState::Opaque;
+    }
 
 	const FMatrix& GetPacketWorld(const FRenderPacket& Packet)
 	{
@@ -73,7 +93,27 @@ bool FRenderer::Init()
 	FLightingConstants LightingConstant{};
 	RenderCommand::UpdateBufferData(LightingCB.get(), &LightingConstant);
 
-	TileLightCulling.Init();
+    TileShadingCB = RenderCommand::CreateConstantBuffer(sizeof(FTileLightShadingConstants));
+    const FTileLightShadingConstants TileDefaults{};
+    RenderCommand::UpdateBufferData(TileShadingCB.get(), &TileDefaults);
+    RenderCommand::BindConstantBuffer(4, TileShadingCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+    DepthShader = FRenderResourceManager::FindShaderProgram("Resources/Shader/StaticMeshDepthShader.hlsl");
+    if (!DepthShader)
+    {
+        HTR_LOG(Error, "[Renderer] required depth shader not registered: Resources/Shader/StaticMeshDepthShader.hlsl");
+        return false;
+    }
+    if (DepthShader->ComputeShader || !DepthShader->VertexShader || !DepthShader->PixelShader || !DepthShader->VertexShader->IsValid() || !DepthShader->PixelShader->IsValid())
+    {
+        HTR_LOG(Error, "[Renderer] invalid depth graphics program: Resources/Shader/StaticMeshDepthShader.hlsl (valid VS/PS required)");
+        return false;
+    }
+    if (!TileLightCulling.Init())
+    {
+        HTR_LOG(Error, "[Renderer] required tile light culling initialization failed");
+        return false;
+    }
+    HTR_LOG(Info, "[Renderer] required depth graphics program and tile culling CS initialized");
 	GPUOcclusion.Init();   // 실패해도 오클루전만 못 쓸 뿐 렌더링은 된다
 
 	return true;
@@ -148,10 +188,17 @@ void FRenderer::RenderAll(FRenderQueue& InQueue, const FMatrix& ViewProjection, 
 	RenderTranslucent(ViewProjection);
 }
 
-void FRenderer::RenderOpaque(const FMatrix& ViewProjection)
+void FRenderer::RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass)
 {
-	DrawStaticGroups();
-	DrawPackets(0, FirstTranslucentIndex, ViewProjection);
+    const ESceneMeshPass Pass = bAfterPrepass ? ESceneMeshPass::OpaqueAfterPrepass : ESceneMeshPass::Color;
+    DrawStaticGroups(Pass);
+    DrawPackets(0, FirstTranslucentIndex, ViewProjection, Pass);
+}
+
+void FRenderer::RenderDepthPrepass(const FMatrix& ViewProjection)
+{
+    DrawStaticGroups(ESceneMeshPass::DepthPrepass);
+    DrawPackets(0, FirstTranslucentIndex, ViewProjection, ESceneMeshPass::DepthPrepass);
 }
 
 // RenderOpaque가 남긴 반투명 패킷을 먼 것부터 그린다.
@@ -164,7 +211,7 @@ void FRenderer::RenderTranslucent(const FMatrix& ViewProjection)
 }
 
 // 스태틱 메시 묶음을 정렬 키 순서로 그린다. 바인딩은 묶음마다 한 번, 항목마다는 칸 바인딩과 드로우만 한다.
-void FRenderer::DrawStaticGroups()
+void FRenderer::DrawStaticGroups(ESceneMeshPass Pass)
 {
 	if (StaticGroups.empty())
 		return;
@@ -177,14 +224,15 @@ void FRenderer::DrawStaticGroups()
 	UMaterial* BoundMaterial = nullptr;
 	for (const FStaticDrawGroup* Group : StaticGroups)
 	{
+		if (Pass == ESceneMeshPass::DepthPrepass && !UsesDepthPrepass(Group->Material)) continue;
 		RenderCommand::BindMesh(Group->Mesh, Group->LODIndex);
 		if (Group->Material != BoundMaterial)
 		{
 			BoundMaterial = Group->Material;
-			BindMaterial(BoundMaterial);
+			BindMaterial(BoundMaterial, Pass);
 			FRenderPacket MaterialOnly;           // 머티리얼 파라미터 갱신은 패킷을 받으므로 머티리얼만 채워 넘긴다
 			MaterialOnly.Material = BoundMaterial;
-			UpdateMaterialParams(MaterialOnly);
+			if (Pass != ESceneMeshPass::DepthPrepass) UpdateMaterialParams(MaterialOnly);
 		}
 
 		for (const FStaticDrawItem& Item : Group->Items)
@@ -250,7 +298,7 @@ void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewPro
 }
 
 // 정렬된 패킷 중 [Begin, End) 범위를 View 행렬과 Section 범위로 그린다.
-void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection)
+void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass)
 {
 	SCOPE_CYCLE_COUNTER(STAT_DrawRenderPackets);
 
@@ -266,14 +314,15 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 	{
 		const uint32 PacketIndex = SortEntries[k].PacketIndex;
 		const FRenderPacket& RenderPacket = RenderPackets[PacketIndex];
+		if (Pass == ESceneMeshPass::DepthPrepass && !UsesDepthPrepass(RenderPacket.Material)) continue;
 		//if (RenderPacket.Mesh == nullptr || RenderPacket.Material == nullptr) continue;
 		if (RenderPacket.Mesh != LastMesh || RenderPacket.LODIndex != LastLODIndex) {
 			RenderCommand::BindMesh(RenderPacket.Mesh, RenderPacket.LODIndex);
 		}
 		if (RenderPacket.Material != LastMaterial) {
-			BindMaterial(RenderPacket.Material);
+			BindMaterial(RenderPacket.Material, Pass);
 		}
-		if (RenderPacket.Material != LastMaterial || RenderPacket.MaterialParamData)
+		if (Pass != ESceneMeshPass::DepthPrepass && (RenderPacket.Material != LastMaterial || RenderPacket.MaterialParamData))
 			UpdateMaterialParams(RenderPacket);
 		if (bUsePerObjectSlots && RenderPacket.Slot != InvalidObjectSlot)
 		{
@@ -285,10 +334,7 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 			UpdatePerObjectConstants(RenderPacket, ViewProjection);
 		}
 
-		RenderCommand::DrawIndexed(
-			RenderPacket.IndexCount ? RenderPacket.IndexCount : RenderPacket.Mesh->GetIndexBuffer(RenderPacket.LODIndex)->GetIndexCount(),
-			RenderPacket.StartIndex
-		);
+		RenderCommand::DrawIndexed(RenderPacket.IndexCount ? RenderPacket.IndexCount : RenderPacket.Mesh->GetIndexBuffer(RenderPacket.LODIndex)->GetIndexCount(), RenderPacket.StartIndex);
 		LastMaterial = RenderPacket.Material;
 		LastMesh = RenderPacket.Mesh;
 		LastLODIndex = RenderPacket.LODIndex;
@@ -473,19 +519,29 @@ void FRenderer::SetViewMode(const FViewRenderMode& Mode)
 	ViewModeNormalShader = FRenderResourceManager::GetUberLitProgram(Mode, true);
 }
 
-void FRenderer::SetLighting(const FLightingConstants& GlobalLights,
-	const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights)
+void FRenderer::SetLighting(const FLightingConstants& GlobalLights, const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights)
 {
 	// 이전 View의 PS SRV 바인딩을 끊은 뒤 동적 LocalLight 버퍼를 다시 쓴다.
-	TileLightCulling.UnbindForShading();
+	RenderCommand::UnbindShaderResources(8, 4, EShaderBindFlagBits::Pixel);
+	RenderCommand::UnbindShaderResources(8, 2, EShaderBindFlagBits::Vertex);
 	RenderCommand::UpdateBufferData(LightingCB.get(), &GlobalLights);
 	LocalLight.UploadLights(PointLights, SpotLights);
+    // 반투명은 VS(Gouraud)와 PS 모두 전체 동적 배열을 읽는다.
+    RenderCommand::BindShaderResource(8, LocalLight.GetPointLightSRV(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(9, LocalLight.GetSpotLightSRV(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
 }
 
 // Material마다 Shader/Texture/Sampler/State 꽂기
-void FRenderer::BindMaterial(UMaterial* material)
+void FRenderer::BindMaterial(UMaterial* material, ESceneMeshPass Pass)
 {
+    if (Pass == ESceneMeshPass::DepthPrepass)
+    {
+        RenderCommand::BindShaderProgram(DepthShader);
+        RenderCommand::SetBlendState(EBlendState::NoColorWrite);
+        RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
+        return;
+    }
 	// 스태틱 메시 머티리얼만 조명 대상이다. 빌보드·파티클(ParticleSubUV)은 자기 셰이더를 그대로 쓴다.
 	if (material->ParamLayout == EMaterialParamLayout::StaticMesh)
 	{
@@ -509,8 +565,11 @@ void FRenderer::BindMaterial(UMaterial* material)
 	RenderCommand::SetBlendState(material->BlendState);
 	// 반투명은 뒤에 그려지는 Grid·다른 반투명을 가리지 않도록 깊이를 쓰지 않는다.
 	const bool bTranslucent = material->BlendState != EBlendState::Opaque;
-	RenderCommand::SetDepthStencilState(bTranslucent && material->DepthStencilState == EDepthStencilState::Default
-		? EDepthStencilState::ReadOnly : material->DepthStencilState);
+    // 패스별 GPU 상태만 선택한다. 재질에 저장된 StaticMesh 기본 깊이 상태는 변경하지 않는다.
+    const EDepthStencilState DepthState = Pass == ESceneMeshPass::OpaqueAfterPrepass && UsesDepthPrepass(material)
+        ? EDepthStencilState::ReadOnlyLessEqual
+        : (bTranslucent && material->DepthStencilState == EDepthStencilState::Default ? EDepthStencilState::ReadOnly : material->DepthStencilState);
+    RenderCommand::SetDepthStencilState(DepthState);
 
 	for (int i = 0; i < material->Textures.size(); i++)
 	{
@@ -590,9 +649,19 @@ void FRenderer::UpdatePerObjectConstants(const FMatrix& World, const FMatrix& No
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
 }
 
-void FRenderer::EnsureTileLightCapacity(const FMatrix& ViewProjection, uint32 Width, uint32 Height, bool bVisualizeLightCount)
+void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount)
 {
-	if (TileLightCulling.EnsureTileCapacity(Width, Height))
-		TileLightCulling.Dispatch(LocalLight, ViewProjection, Width, Height, bVisualizeLightCount);
-
+    const bool bReady = TileLightCulling.Execute(Resources, Width, Height, Projection, Depth, Lights.GetData(), Lights.Num());
+    FTileLightShadingConstants Constants{};
+    Constants.TileCountX = Resources.TileCountX;
+    Constants.TileCountY = Resources.TileCountY;
+    Constants.MaxLightsPerTile = Resources.MaxLightsPerTile;
+    Constants.PointCount = LocalLight.GetNumPointLights();
+    Constants.SpotCount = LocalLight.GetNumSpotLights();
+    Constants.bVisualizeLightCount = bReady && bVisualizeLightCount;
+    Constants.bUseTileList = bReady;
+    RenderCommand::UpdateBufferData(TileShadingCB.get(), &Constants);
+    RenderCommand::BindConstantBuffer(4, TileShadingCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(10, bReady ? Resources.TileLightCountSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
