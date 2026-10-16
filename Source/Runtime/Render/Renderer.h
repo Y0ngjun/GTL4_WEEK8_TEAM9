@@ -10,6 +10,10 @@
 #include "Occlusion/GPUOcclusion.h"
 #include "TileLightCulling.h"
 #include "LocalLight.h"
+#include "Shadow/ShadowDepthTarget.h"
+
+class FScene;
+struct FProjectedShadowInfo;
 
 constexpr uint32 ObjectSlotBytes = 256;
 
@@ -105,6 +109,14 @@ public:
 
 	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
+	void RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo& Shadow);
+	ID3D11ShaderResourceView* GetDirectionalShadowDebugSRV() const
+	{
+		return DirectionalShadowTarget.IsValid() ? DirectionalShadowTarget.SliceSRVs[0].Get() : nullptr;
+	}
+
+	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow);
+
 private:
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
 	FRenderQueue RenderPackets;
@@ -116,6 +128,10 @@ private:
 	TUniquePtr<FConstantBuffer> LightingCB;
 	TUniquePtr<FConstantBuffer> TileShadingCB;
 	FShaderProgram* DepthShader = nullptr;
+
+	TUniquePtr<FConstantBuffer> ShadowViewCB;
+	TUniquePtr<FConstantBuffer> ShadowCB;
+	ComPtr<ID3D11SamplerState> ShadowSampler;
 
 	// 모든 패킷의 World 행렬을 256바이트 칸에 한 번에 올린 버퍼. D3D11.1 오프셋 바인딩을 못 쓰면 PerObjectCB로 돌아간다.
 	TUniquePtr<FConstantBuffer> PerObjectSlotCB;
@@ -149,4 +165,6 @@ private:
 	void UploadPerObjectConstants();
 
 	TArray<FSortEntry> SortEntries;
+
+	FShadowDepthTarget DirectionalShadowTarget;
 };

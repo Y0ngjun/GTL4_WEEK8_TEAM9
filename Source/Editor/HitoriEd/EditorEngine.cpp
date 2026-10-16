@@ -236,6 +236,7 @@ bool UEditorEngine::Init()
 		const FGameViewportClient* GameClient = GetPIEGameViewportClient();
 		return IsPIEInWindow() && GameClient && GameClient->HasCamera() && PIEViewport->IsVisible() && GameClient->GetViewRenderMode().ViewMode == EViewMode::Lit;
 	});
+	SettingsPanel->SetShadowMapQuery([this]() { return Renderer->GetDirectionalShadowDebugSRV(); });
 
 	SkyboxRenderer = MakeUnique<FSkyboxRenderer>();
 	SkyboxRenderer->Init(ResourcePaths::DefaultSkyPanorama);
@@ -448,7 +449,13 @@ void UEditorEngine::RenderViewports()
             continue;
         Viewport.EnsureRenderTargets();
         UWorld* ViewWorld = Client->GetWorld();
-        const FSceneView View = Viewport.CreateSceneView();
+        FSceneView View = Viewport.CreateSceneView();
+
+		if (SettingsPanel->GetSettings().bViewFromDirectionalShadow)
+		{
+			OverrideViewWithDirectionalShadow(*ViewWorld, View);
+		}
+
         FSceneRenderData& Data = Viewport.GetSceneRenderData();
         SceneRenderer.PrepareView(*ViewWorld, View, Data);
         // 파티클/빌보드 상수가 다음 수집으로 바뀌기 전에 이 화면을 소비한다.
@@ -880,6 +887,19 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	ViewWorld.GetScene().BuildLightingConstants(Lighting);
 	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
+
+	// Pass 1
+	FProjectedShadowInfo DirectionalShadow;
+	const bool bDirectionalShadow = View.RenderMode.ViewMode == EViewMode::Lit
+		&& SettingsPanel->GetSettings().bDrawPrimitives
+		&& BuildDirectionalShadowInfo(ViewWorld.GetScene(), DirectionalShadow);
+
+	if (bDirectionalShadow)
+	{
+		Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(), DirectionalShadow);
+	}
+
+	Renderer->BindShadowResources(bDirectionalShadow ? &DirectionalShadow : nullptr);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);

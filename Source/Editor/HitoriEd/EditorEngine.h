@@ -40,6 +40,8 @@
 #include "Text/Font.h"
 #include "Text/TextRenderer.h"
 
+#include "Render/Shadow/ShadowSetup.h"
+
 class UEditorEngine : public UEngine
 {
 	DECLARE_CLASS(UEditorEngine, UEngine)
@@ -108,7 +110,7 @@ private:
 	//불투명 물체에 대한 Pass
 	void RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, FRenderQueue& RenderQueue, const FDirectionalLightInfo& DirectionalLight);
 	//안개에 대한 Pass
-	void RenderFogPass(UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation,const FMatrix& ViewProjection, FRenderQueue& RenderQueue);
+	void RenderFogPass(UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation, const FMatrix& ViewProjection, FRenderQueue& RenderQueue);
 	//Overlay Pass
 	void RenderOverlayPass(FEditorViewportClient* OverlayClient, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, FRenderQueue& RenderQueue);
 	//Gamma Encode Pass: Linear 씬 컬러를 톤매핑하고 화면 표시용 sRGB로 인코딩한다
@@ -193,4 +195,18 @@ private:
 	void OpenScene();
 	void SaveCurrentScene();
 	void SaveSceneAs();
+
+	static void OverrideViewWithDirectionalShadow(UWorld& World, FSceneView& View)
+	{
+		FProjectedShadowInfo Shadow;
+		if (!BuildDirectionalShadowInfo(World.GetScene(), Shadow))
+		{
+			return;
+		}
+		
+		View.ViewMatrix = Shadow.ViewMatrix;
+		View.ProjectionMatrix = Shadow.ProjectionMatrix;
+		View.ViewProjection = Shadow.ViewProjection;
+		View.Frustum = Shadow.Frustum;
+	}
 };

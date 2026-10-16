@@ -58,6 +58,7 @@ void FSettingsPanel::OnRender()
 	ImGui::Checkbox("Depth View", &Settings.bDepthView);
 	ImGui::Checkbox("Linear Workflow", &Settings.bLinearWorkflow);
 	ImGui::SetItemTooltip("Off: no sRGB decode/encode (gamma-space rendering), for comparison.");
+	ImGui::Checkbox("View From Directional Shadow", &Settings.bViewFromDirectionalShadow);
 	// 톤매핑은 View별 Lit에서만 적용되므로, 보이는 View 중 Lit이 하나라도 있어야 조작할 의미가 있다
 	const bool bAnyLitView = HasLitViewQuery ? HasLitViewQuery() : true;
 
@@ -71,6 +72,16 @@ void FSettingsPanel::OnRender()
 	ImGui::EndDisabled();
 
 	//////////////////////////////////////////////////////////
+
+	if (ShadowMapQuery)
+	{
+		if (ID3D11ShaderResourceView* ShadowSRV = ShadowMapQuery())
+		{
+			ImGui::Dummy(ImVec2(0.0f, SectionGap));
+			ImGui::SeparatorText("Directional Shadow Map");
+			ImGui::Image((ImTextureID)ShadowSRV, ImVec2(256.0f, 256.0f));
+		}
+	}
 
 	ImGui::Dummy(ImVec2(0.0f, SectionGap));
 	ImGui::SeparatorText("Grid");

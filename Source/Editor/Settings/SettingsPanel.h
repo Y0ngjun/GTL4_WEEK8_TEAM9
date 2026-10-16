@@ -6,9 +6,10 @@
 #include "Math/Quat.h"
 #include "Math/Vector.h"
 #include "Render/ViewMode.h"
-class FViewportsPanel;
 
+class FViewportsPanel;
 class UWorld;
+struct ID3D11ShaderResourceView;
 
 struct FEditorSettings
 {
@@ -20,6 +21,8 @@ struct FEditorSettings
 	bool bDrawGrid = true;
 	bool bExponentialHeightFog = true;
 	bool bVisualizeTileLightCount = false;
+	
+	bool bViewFromDirectionalShadow = false;
 
 	// Rendering
 	bool bEnableFXAA = true;
@@ -84,6 +87,8 @@ public:
     // 종료 저장은 마지막 프레임의 복사본을 사용해 뷰포트 클라이언트 수명과 분리한다.
     void CaptureViewportSettings();
 
+	void SetShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { ShadowMapQuery = std::move(InQuery); }
+
 private:
 	static constexpr float SectionGap = 10.0f;
 	static constexpr float SubsectionGap = 4.0f;
@@ -95,4 +100,6 @@ private:
     std::function<bool()> HasLitViewQuery;
 	UWorld* World;
 	FEditorSettings Settings;
+
+	std::function<ID3D11ShaderResourceView* ()> ShadowMapQuery;
 };
