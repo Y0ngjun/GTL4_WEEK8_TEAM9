@@ -196,10 +196,16 @@ private:
 	void SaveCurrentScene();
 	void SaveSceneAs();
 
-	static void OverrideViewWithDirectionalShadow(UWorld& World, FSceneView& View)
+	static void OverrideViewWithDirectionalShadow(UWorld& World, FSceneView& View, EShadowDebugView Mode)
 	{
 		FProjectedShadowInfo Shadow;
-		if (!BuildDirectionalShadowInfo(World.GetScene(), Shadow))
+		const bool bBuilt = Mode == EShadowDebugView::Directional ?
+			BuildDirectionalShadowInfo(World.GetScene(), Shadow)
+			: Mode == EShadowDebugView::Spot ?
+			BuildSpotShadowInfo(World.GetScene(), Shadow)
+			: false;
+
+		if (!bBuilt)
 		{
 			return;
 		}

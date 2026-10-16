@@ -3,6 +3,7 @@
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/Scene.h"
 #include "Camera/CameraProjection.h"
+#include "Engine/LightSceneProxy.h"
 
 bool ComputeShadowCasterBounds(const FScene& Scene, FAABB& OutBounds)
 {
@@ -84,4 +85,39 @@ bool BuildDirectionalShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutSh
 
 	OutShadow = MakeDirectionalShadowInfo(Lighting.Directional.Direction, Bounds);
 	return true;
+}
+
+FProjectedShadowInfo MakeSpotShadowInfo(const FSpotLightInfo& Spot)
+{
+	const FVector Forward = Spot.Direction.GetSafeNormal();
+
+	const float OuterHalfAngleRadians = std::acos(std::clamp(Spot.CosOuterCone, -1.0f, 1.0f));
+
+	FCameraProjection Projection;
+	Projection.Mode = EProjectionMode::Perspective;
+	Projection.FovDegrees = OuterHalfAngleRadians * 2.0f * 180.0f / PI;
+	Projection.NearClip = SpotShadowNearClip;
+	Projection.FarClip = std::max(Spot.AttenuationRadius, SpotShadowNearClip * 2.0f);
+
+	FProjectedShadowInfo Info;
+	Info.ViewMatrix = MakeShadowViewMatrix(Spot.Position, Forward);
+	Info.ProjectionMatrix = Projection.GetMatrix(1.0f);
+	Info.ViewProjection = Info.ViewMatrix * Info.ProjectionMatrix;
+	Info.Frustum = ExtractFrustumPlanes(Info.ViewProjection);
+	return Info;
+}
+
+bool BuildSpotShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutShadow)
+{
+	for (const FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		if (!Proxy->IsVisible() || Proxy->GetLightType() != ELightType::Spot)
+		{
+			continue;
+		}
+
+		OutShadow = MakeSpotShadowInfo(static_cast<const FSpotLightSceneProxy*>(Proxy)->GetInfo());
+		return true;
+	}
+	return false;
 }

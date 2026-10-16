@@ -11,6 +11,8 @@ class FViewportsPanel;
 class UWorld;
 struct ID3D11ShaderResourceView;
 
+enum class EShadowDebugView : int32 { Off, Directional, Spot };
+
 struct FEditorSettings
 {
 	// 에디터 렌더 옵션과 편집 Quad 레이아웃의 영구 설정을 한곳에 담는다.
@@ -21,8 +23,8 @@ struct FEditorSettings
 	bool bDrawGrid = true;
 	bool bExponentialHeightFog = true;
 	bool bVisualizeTileLightCount = false;
-	
-	bool bViewFromDirectionalShadow = false;
+
+	int32 ShadowDebugView = 0;
 
 	// Rendering
 	bool bEnableFXAA = true;
@@ -46,18 +48,18 @@ struct FEditorSettings
 	float ViewportSplitVertical = 0.5f;
 	bool bViewportMaximized = false;
 	int32 MaximizedViewportIndex = 0;
-    // 기존 Quad 저장 형식은 4개 슬롯이다. 미저장 값은 초기 카메라 설정을 유지한다.
-    float ViewFov[4]{};
-    float ViewOrthoWidth[4]{};
-    int32 ViewPreset[4]{-1,-1,-1,-1};
-    // 키가 없으면 FViewRenderMode 기본값(Lit)을 쓴다.
-    FViewRenderMode ViewRenderMode[4]{};
-    // View별 카메라 Transform은 Quaternion 그대로 저장해 재실행 후 같은 시점을 복원한다.
-    // 구형 editor.ini에 키가 없으면 Saved가 false로 남아 뷰포트 클라이언트의 초기 Transform을 유지한다.
-    FVector ViewLocation[4]{};
-    FQuat ViewRotation[4]{};
-    bool bViewLocationSaved[4]{};
-    bool bViewRotationSaved[4]{};
+	// 기존 Quad 저장 형식은 4개 슬롯이다. 미저장 값은 초기 카메라 설정을 유지한다.
+	float ViewFov[4]{};
+	float ViewOrthoWidth[4]{};
+	int32 ViewPreset[4]{ -1,-1,-1,-1 };
+	// 키가 없으면 FViewRenderMode 기본값(Lit)을 쓴다.
+	FViewRenderMode ViewRenderMode[4]{};
+	// View별 카메라 Transform은 Quaternion 그대로 저장해 재실행 후 같은 시점을 복원한다.
+	// 구형 editor.ini에 키가 없으면 Saved가 false로 남아 뷰포트 클라이언트의 초기 Transform을 유지한다.
+	FVector ViewLocation[4]{};
+	FQuat ViewRotation[4]{};
+	bool bViewLocationSaved[4]{};
+	bool bViewRotationSaved[4]{};
 };
 
 
@@ -81,11 +83,11 @@ public:
 	bool SaveSettings() const;
 	// editor.ini의 기존 렌더·에디터·뷰포트 값을 같은 설정 객체로 복원한다.
 	bool LoadSettings();
-    // 초기화된 뷰포트 클라이언트에 저장 설정을 적용한다.
-    void SetViewportsPanel(FViewportsPanel* Value);
-    void SetHasLitViewQuery(std::function<bool()> InQuery) { HasLitViewQuery = std::move(InQuery); }
-    // 종료 저장은 마지막 프레임의 복사본을 사용해 뷰포트 클라이언트 수명과 분리한다.
-    void CaptureViewportSettings();
+	// 초기화된 뷰포트 클라이언트에 저장 설정을 적용한다.
+	void SetViewportsPanel(FViewportsPanel* Value);
+	void SetHasLitViewQuery(std::function<bool()> InQuery) { HasLitViewQuery = std::move(InQuery); }
+	// 종료 저장은 마지막 프레임의 복사본을 사용해 뷰포트 클라이언트 수명과 분리한다.
+	void CaptureViewportSettings();
 
 	void SetShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { ShadowMapQuery = std::move(InQuery); }
 
@@ -93,11 +95,11 @@ private:
 	static constexpr float SectionGap = 10.0f;
 	static constexpr float SubsectionGap = 4.0f;
 
-    // View별 Transform·투영·표시 설정을 읽어 저장용 스냅샷에 반영한다.
-    void ReadViewportSettings(FEditorSettings& Out) const;
-    void ApplyViewportSettings();
-    FViewportsPanel* ViewportsPanel = nullptr;
-    std::function<bool()> HasLitViewQuery;
+	// View별 Transform·투영·표시 설정을 읽어 저장용 스냅샷에 반영한다.
+	void ReadViewportSettings(FEditorSettings& Out) const;
+	void ApplyViewportSettings();
+	FViewportsPanel* ViewportsPanel = nullptr;
+	std::function<bool()> HasLitViewQuery;
 	UWorld* World;
 	FEditorSettings Settings;
 
