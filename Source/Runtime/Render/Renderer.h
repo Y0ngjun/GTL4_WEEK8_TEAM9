@@ -10,6 +10,7 @@
 #include "Occlusion/GPUOcclusion.h"
 #include "TileLightCulling.h"
 #include "LocalLight.h"
+#include "ShadowTypes.h"
 
 constexpr uint32 ObjectSlotBytes = 256;
 
@@ -80,7 +81,9 @@ public:
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
-	void RenderShadowDepth(const FMatrix& ViewProjection,  const FRenderQueue* OverrideQueue);
+
+	// 광원 하나의 Shadow Map에 caster들의 깊이를 기록한다.
+	void RenderShadowDepth(const FLightShadowData& Shadow);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -95,6 +98,9 @@ public:
 
 	// 큐를 Material, Opaque, Mesh에 따라 정렬하고 View 상수(b0)를 올린다
 	void RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection, const FVector& CameraPosition);
+	
+	// CreateShadowMap2D 를 외부에서 호출하려면 거치는 함수
+	bool EnsureCreated(FShadowMapDesc Desc);
 
 	// [측정 전용] RenderOpaque 직후에 호출한다. 불투명 패킷을 깊이 LESS_EQUAL·색 쓰기 없이 다시 그리며
 	// 패킷마다 오클루전 쿼리를 걸어, 최종 화면에 실제로 픽셀을 남긴 물체 수를 센다.
@@ -137,9 +143,12 @@ private:
 	FLocalLight LocalLight;
 	FTileLightCulling TileLightCulling;
 
-	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color, const FRenderQueue* OverrideQueue);
+	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color, const FRenderQueue* OverrideQueue = nullptr);
 	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
+	FTexture2D* EnsureShadowMap2D(uint32 LightId, FShadowMapDesc ShadowMapDesc);
+	
+	TMap<uint32, TUniquePtr<FTexture2D>> ShadowMaps2D;
 
 	// 이번 프레임 스태틱 메시 묶음 (정렬 키 순). 비어 있지 않은 것만 담는다.
 	std::vector<const FStaticDrawGroup*> StaticGroups;

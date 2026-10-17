@@ -40,6 +40,7 @@ struct FShadowView
 	// 이번에 그릴 출력면의 DSV 인덱스
 	uint32 TargetSlice = 0;
 
+	// 광원에서 깊이를 기록할 물체들
 	FRenderQueue CasterQueue;
 
 	// directional 수신 범위를 PS에서 제한하기 위한 값.

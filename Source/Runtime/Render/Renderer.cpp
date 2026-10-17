@@ -203,13 +203,69 @@ void FRenderer::RenderDepthPrepass(const FMatrix& ViewProjection)
 
 
 // light space 행렬을 ViewCB에 전달
-void FRenderer::RenderShadowDepth(const FMatrix& ViewProjection, const FRenderQueue* OverrideQueue)
+// 광원 하나의 Shadow Map에 caster들의 깊이를 기록한다.
+void FRenderer::RenderShadowDepth(const FLightShadowData& Shadow)
 {
-	if (!OverrideQueue) return;
+	// 현재는 단일 2D Shadow Map만 지원한다.
+	// Point의 Cube 렌더링은 이후 별도로 확장한다.
+	if (!Shadow.Settings.bCastShadows || Shadow.MapDesc.Type != EShadowMapType::Texture2D ||  
+		Shadow.MapDesc.SliceCount != 1 ||
+		Shadow.Views.Num() != 1)
+	{
+		return;
+	}
+
+	const FShadowView& ShadowView = Shadow.Views[0];
+
+	// 단일 2D 텍스처이므로 출력 면은 0이어야 한다.
+	if (ShadowView.TargetSlice != 0)
+		return;
+
+	// 기존 자원이 맞으면 재사용하고, 없거나 해상도가 다르면 생성한다.
+	// 소유권은 ShadowMaps2D에 있고, 여기서는 포인터만 빌려 사용한다.
+	FTexture2D* ShadowMap = EnsureShadowMap2D(Shadow.LightId, Shadow.MapDesc);
+
+	if (!ShadowMap)
+		return;
+
+	// 이후 Uber Shader의 directional Shadow Map 조회 슬롯을 t12로 사용한다.
+	// 이전 렌더링에서 읽던 SRV를 해제한 뒤 깊이 출력 대상으로 연결한다.
+	constexpr uint32 ShadowMapSlot = 12;
+	RenderCommand::UnbindShaderResource(ShadowMapSlot, EShaderBindFlagBits::Pixel);
+
+	// 색상 출력 없이 깊이 텍스처만 사용하는 패스를 구성한다.
+	FRenderingInfo ShadowPassInfo{};
+
+	// Shadow Map 전체를 그릴 수 있도록 viewport를 맞춘다.
+	ShadowPassInfo.ViewportSetting.Width = ShadowMap->GetWidth();
+	ShadowPassInfo.ViewportSetting.Height = ShadowMap->GetHeight();
+
+	// 깊이는 가장 먼 값인 1로 초기화한다.
+	// 이후 더 가까운 caster의 깊이가 기록된다.
+	ShadowPassInfo.DepthStencil.Texture = ShadowMap;
+	ShadowPassInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
+	ShadowPassInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
+	ShadowPassInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
+
+	// 깊이 clear, DSV 연결, viewport 설정을 수행한다.
+	RenderCommand::BeginRenderPass(ShadowPassInfo);
+
+	// 이전 패스의 wireframe 등의 상태에 영향을 받지 않도록 지정한다.
+	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+	RenderCommand::SetPrimitiveTopology(
+		D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	// 깊이 셰이더가 카메라 행렬 대신 광원 행렬을 읽도록 갱신한다.
 	FViewConstants Constants{};
-	Constants.ViewProjection = ViewProjection;
+	Constants.ViewProjection = ShadowView.ViewProjection;
 	RenderCommand::UpdateBufferData(ViewCB.get(), &Constants);
-	DrawPackets(0, OverrideQueue->Num(), ViewProjection, ESceneMeshPass::DepthPrepass, OverrideQueue);
+
+	// 공통 그리기 함수를 사용해 caster queue 전체를 렌더링한다.
+	// 큐가 비어 있어도 위의 clear는 수행되어 이전 그림자가 남지 않는다.
+	DrawPackets(0, ShadowView.CasterQueue.Num(), ShadowView.ViewProjection, ESceneMeshPass::DepthPrepass, &ShadowView.CasterQueue);
+
+	// DSV 연결을 해제해서 이후 셰이더에서 깊이를 읽을 수 있게 한다.
+	RenderCommand::EndRenderPass(ShadowPassInfo);
 }
 
 
@@ -310,7 +366,7 @@ void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewPro
 }
 
 // 정렬된 패킷 중 [Begin, End) 범위를 View 행렬과 Section 범위로 그린다.
-void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass, const FRenderQueue* OverrideQueue = nullptr)
+void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass, const FRenderQueue* OverrideQueue)
 {
 	SCOPE_CYCLE_COUNTER(STAT_DrawRenderPackets);
 
@@ -655,6 +711,52 @@ void FRenderer::UpdatePerObjectConstants(const FMatrix& World, const FMatrix& No
 	Constants.NormalMatrix = NormalMatrix;
 
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
+}
+
+FTexture2D* FRenderer::EnsureShadowMap2D(uint32 LightId, FShadowMapDesc Desc)
+{
+	TUniquePtr<FTexture2D> DepthTarget;
+
+	if (Desc.Type != EShadowMapType::Texture2D || Desc.SliceCount != 1 || Desc.Resolution == 0)
+		return nullptr;
+
+	if (const auto* Existing = ShadowMaps2D.Find(LightId))
+	{
+		FTexture2D* Texture = Existing->get();
+
+		if (Texture && Texture->GetRawPtr() && Texture->GetDSV() && Texture->GetSRV() 
+			&& Texture->GetWidth() == Desc.Resolution && Texture->GetHeight() == Desc.Resolution)
+		{
+			return Texture;
+		}
+	}
+
+	D3D11_TEXTURE2D_DESC TextureDesc{};
+	TextureDesc.Width = Desc.Resolution;
+	TextureDesc.Height = Desc.Resolution;
+	TextureDesc.MipLevels = 1;
+	TextureDesc.ArraySize = 1;
+	TextureDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	TextureDesc.SampleDesc.Count = 1;
+	TextureDesc.Usage = D3D11_USAGE_DEFAULT;
+	TextureDesc.BindFlags =
+		D3D11_BIND_DEPTH_STENCIL |
+		D3D11_BIND_SHADER_RESOURCE;
+
+	TUniquePtr<FTexture2D> NewTexture =
+		RenderCommand::CreateTexture2D(TextureDesc);
+
+	if (!NewTexture || !NewTexture->GetRawPtr() || !NewTexture->GetDSV() || !NewTexture->GetSRV())
+	{
+		return nullptr;
+	}
+
+	// 생성 성공 후 맵에 소유권 이전
+	auto& StoredTexture = ShadowMaps2D[LightId];
+	StoredTexture = std::move(NewTexture);
+
+	return StoredTexture.get();
+
 }
 
 void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount)

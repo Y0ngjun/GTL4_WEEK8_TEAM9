@@ -881,6 +881,17 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
+	// 그림자 Pass
+	// Lit 모드에서 메시를 그리는 경우, 광원별 Shadow Map을 먼저 생성한다.
+	if (View.RenderMode.ViewMode == EViewMode::Lit &&
+		SettingsPanel->GetSettings().bDrawPrimitives)
+	{
+		for (const FLightShadowData& Shadow : Data.LightShadows)
+		{
+			Renderer->RenderShadowDepth(Shadow);
+		}
+	}
+
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
 
