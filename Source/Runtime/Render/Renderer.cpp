@@ -126,6 +126,11 @@ bool FRenderer::Init()
 		HTR_LOG(Warning, "[Renderer] directional shadow target unavailable");
 	}
 
+	if (!SpotShadowTarget.Ensure(1024, 1, false))
+	{
+		HTR_LOG(Warning, "[Renderer] spot shadow target unavailable");
+	}
+
 	ShadowViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
 
 	ShadowCB = RenderCommand::CreateConstantBuffer(sizeof(FShadowConstants));
@@ -691,54 +696,6 @@ void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix&
 	RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
 
-void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo& Shadow)
-{
-	SCOPE_CYCLE_COUNTER(STAT_ShadowDepths);
-
-	if (!DirectionalShadowTarget.Ensure(1024, 1, false))
-	{
-		return;
-	}
-
-	RenderCommand::UnbindShaderResources(12, 1, EShaderBindFlagBits::Pixel);
-
-	ID3D11DeviceContext* Context = RenderCommand::GetContext();
-	ID3D11DepthStencilView* DSV = DirectionalShadowTarget.SliceDSVs[0].Get();
-	const uint32 Resolution = DirectionalShadowTarget.Resolution;
-
-	Context->OMSetRenderTargets(0, nullptr, DSV);
-	Context->ClearDepthStencilView(DSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
-	RenderCommand::SetViewport(0, 0, Resolution, Resolution);
-
-	RenderCommand::BindShaderProgram(DepthShader);
-	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
-	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
-	RenderCommand::SetBlendState(EBlendState::NoColorWrite);
-	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-	FViewConstants ShadowView{};
-	ShadowView.ViewProjection = Shadow.ViewProjection;
-	RenderCommand::UpdateBufferData(ShadowViewCB.get(), &ShadowView);
-	RenderCommand::BindConstantBuffer(0, ShadowViewCB.get(), EShaderBindFlagBits::Vertex);
-	RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
-
-	for (int32 Index = 0; Index < Scene.Proxies.Num(); ++Index)
-	{
-		const FPrimitiveSceneProxy* Proxy = Scene.Proxies[Index];
-		UStaticMesh* Mesh = Proxy->GetMesh();
-		if (!Scene.PrimitiveFlags[Index] || !Mesh)
-		{
-			continue;
-		}
-
-		RenderCommand::BindMesh(Mesh, 0);
-		UpdatePerObjectConstants(Proxy->GetLocalToWorld(), Proxy->GetNormalMatrix());
-		RenderCommand::DrawIndexed(Mesh->GetIndexBuffer(0)->GetIndexCount(), 0);
-	}
-	
-	Context->OMSetRenderTargets(0, nullptr, nullptr);
-}
-
 void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShadow)
 {
 	FShadowConstants Constants{};
@@ -751,7 +708,65 @@ void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShado
 
 	RenderCommand::UpdateBufferData(ShadowCB.get(), &Constants);
 	RenderCommand::BindConstantBuffer(5, ShadowCB.get(), EShaderBindFlagBits::Pixel);
-	RenderCommand::BindShaderResource(12, bHasShadow ? DirectionalShadowTarget.ArraySRV.Get() : nullptr, 
+	RenderCommand::BindShaderResource(12, bHasShadow ? DirectionalShadowTarget.ArraySRV.Get() : nullptr,
 		EShaderBindFlagBits::Pixel);
 	RenderCommand::GetContext()->PSSetSamplers(1, 1, ShadowSampler.GetAddressOf());
+}
+
+void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow)
+{
+	SCOPE_CYCLE_COUNTER(STAT_ShadowDepths);
+
+	RenderCommand::UnbindShaderResources(12, 2, EShaderBindFlagBits::Pixel);
+	RenderCommand::BindShaderProgram(DepthShader);
+	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
+	RenderCommand::SetBlendState(EBlendState::NoColorWrite);
+	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	RenderCommand::BindConstantBuffer(0, ShadowViewCB.get(), EShaderBindFlagBits::Vertex);
+	RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
+
+	if (DirectionalShadow && DirectionalShadowTarget.Ensure(1024, 1, false))
+	{
+		RenderShadowDepth(DirectionalShadowTarget, 0, Scene, *DirectionalShadow);
+	}
+
+	if (SpotShadow && SpotShadowTarget.Ensure(1024, 1, false))
+	{
+		RenderShadowDepth(SpotShadowTarget, 0, Scene, *SpotShadow);
+	}
+
+	RenderCommand::GetContext()->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+void FRenderer::RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, const FScene& Scene, const FProjectedShadowInfo& Shadow)
+{
+	ID3D11DeviceContext* Context = RenderCommand::GetContext();
+	ID3D11DepthStencilView* DSV = Target.SliceDSVs[Slice].Get();
+
+	Context->OMSetRenderTargets(0, nullptr, DSV);
+	Context->ClearDepthStencilView(DSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
+	RenderCommand::SetViewport(0, 0, Target.Resolution, Target.Resolution);
+
+	FViewConstants ShadowView{};
+	ShadowView.ViewProjection = Shadow.ViewProjection;
+	RenderCommand::UpdateBufferData(ShadowViewCB.get(), &ShadowView);
+
+	Scene.BVH.QueryCull(FrustumAllPlanesMask,
+		[&](const FBox& B, uint32& M)
+		{
+			return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(B, Shadow.Frustum, M));
+		},
+		[&](FPrimitiveSceneProxy* Proxy)
+		{
+			UStaticMesh* Mesh = Proxy->GetMesh();
+			if (!Proxy->IsVisible() || !Mesh)
+			{
+				return;
+			}
+
+			RenderCommand::BindMesh(Mesh, 0);
+			UpdatePerObjectConstants(Proxy->GetLocalToWorld(), Proxy->GetNormalMatrix());
+			RenderCommand::DrawIndexed(Mesh->GetIndexBuffer(0)->GetIndexCount(), 0);
+		});
 }

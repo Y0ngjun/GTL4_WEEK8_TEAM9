@@ -75,13 +75,22 @@ void FSettingsPanel::OnRender()
 	ImGui::EndDisabled();
 
 	//////////////////////////////////////////////////////////
-	if (ShadowMapQuery)
+	if (DirectionalShadowMapQuery)
 	{
-		if (ID3D11ShaderResourceView* ShadowSRV = ShadowMapQuery())
+		if (ID3D11ShaderResourceView* ShadowSRV = DirectionalShadowMapQuery())
 		{
 			ImGui::Dummy(ImVec2(0.0f, SectionGap));
 			ImGui::SeparatorText("Directional Shadow Map");
 			ImGui::Image((ImTextureID)ShadowSRV, ImVec2(256.0f, 256.0f));
+		}
+	}
+	if (SpotShadowMapQuery)
+	{
+		if (ID3D11ShaderResourceView* SpotSRV = SpotShadowMapQuery())
+		{
+			ImGui::Dummy(ImVec2(0.0f, SectionGap));
+			ImGui::SeparatorText("Spot Shadow Map");
+			ImGui::Image((ImTextureID)SpotSRV, ImVec2(256.0f, 256.0f));
 		}
 	}
 	//////////////////////////////////////////////////////////

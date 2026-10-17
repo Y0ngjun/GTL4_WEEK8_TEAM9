@@ -109,13 +109,18 @@ public:
 
 	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
-	void RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo& Shadow);
 	ID3D11ShaderResourceView* GetDirectionalShadowDebugSRV() const
 	{
 		return DirectionalShadowTarget.IsValid() ? DirectionalShadowTarget.SliceSRVs[0].Get() : nullptr;
 	}
 
 	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow);
+	void RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow);
+
+	ID3D11ShaderResourceView* GetSpotShadowDebugSRV() const
+	{
+		return SpotShadowTarget.IsValid() ? SpotShadowTarget.SliceSRVs[0].Get() : nullptr;
+	}
 
 private:
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
@@ -164,7 +169,11 @@ private:
 	void EnsurePerObjectSlotCapacity(uint32 SlotCount);
 	void UploadPerObjectConstants();
 
+	void RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, const FScene& Scene, const FProjectedShadowInfo& Shadow);
+
 	TArray<FSortEntry> SortEntries;
 
 	FShadowDepthTarget DirectionalShadowTarget;
+
+	FShadowDepthTarget SpotShadowTarget;
 };

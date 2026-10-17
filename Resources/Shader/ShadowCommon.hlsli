@@ -35,6 +35,7 @@ float GetDirectionalShadow(float3 WorldPosition)
 
     float StoredDepth = DirectionalShadowMap.SampleLevel(ShadowPointSampler, float3(ShadowCoord.xy, 0.0f), 0.0f).r;
     
-    return ShadowCoord.z > StoredDepth ? 0.0f : 1.0f;
+    // Bias -0.005f
+    return ShadowCoord.z /*-0.005f*/ > StoredDepth ? 0.0f : 1.0f;
 }
 #endif

@@ -14,7 +14,7 @@ bool ComputeShadowCasterBounds(const FScene& Scene, FAABB& OutBounds)
 	for (int32 Index = 0; Index < Scene.Proxies.Num(); ++Index)
 	{
 		const FPrimitiveSceneProxy* Proxy = Scene.Proxies[Index];
-		if (!Scene.PrimitiveFlags[Index] || !Proxy->GetMesh())
+		if (!Proxy->IsVisible() || !Proxy->GetMesh())
 		{
 			continue;
 		}

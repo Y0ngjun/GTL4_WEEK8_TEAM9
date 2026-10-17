@@ -6,7 +6,7 @@
 class FScene;
 struct FSpotLightInfo;
 
-constexpr float SpotShadowNearClip = 0.1f;
+constexpr float SpotShadowNearClip = 1.0f;
 
 struct FShadowConstants
 {

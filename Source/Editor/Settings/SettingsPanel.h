@@ -89,7 +89,8 @@ public:
 	// 종료 저장은 마지막 프레임의 복사본을 사용해 뷰포트 클라이언트 수명과 분리한다.
 	void CaptureViewportSettings();
 
-	void SetShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { ShadowMapQuery = std::move(InQuery); }
+	void SetDirectionalShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { DirectionalShadowMapQuery = std::move(InQuery); }
+	void SetSpotShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { SpotShadowMapQuery = std::move_if_noexcept(InQuery); }
 
 private:
 	static constexpr float SectionGap = 10.0f;
@@ -103,5 +104,6 @@ private:
 	UWorld* World;
 	FEditorSettings Settings;
 
-	std::function<ID3D11ShaderResourceView* ()> ShadowMapQuery;
+	std::function<ID3D11ShaderResourceView* ()> DirectionalShadowMapQuery;
+	std::function<ID3D11ShaderResourceView* ()> SpotShadowMapQuery;
 };

@@ -236,7 +236,14 @@ bool UEditorEngine::Init()
 			const FGameViewportClient* GameClient = GetPIEGameViewportClient();
 			return IsPIEInWindow() && GameClient && GameClient->HasCamera() && PIEViewport->IsVisible() && GameClient->GetViewRenderMode().ViewMode == EViewMode::Lit;
 		});
-	SettingsPanel->SetShadowMapQuery([this]() { return Renderer->GetDirectionalShadowDebugSRV(); });
+	SettingsPanel->SetDirectionalShadowMapQuery([this]() 
+		{
+			return Renderer->GetDirectionalShadowDebugSRV(); 
+		});
+	SettingsPanel->SetSpotShadowMapQuery([this]()
+		{
+			return Renderer->GetSpotShadowDebugSRV();
+		});
 
 	SkyboxRenderer = MakeUnique<FSkyboxRenderer>();
 	SkyboxRenderer->Init(ResourcePaths::DefaultSkyPanorama);
@@ -244,31 +251,31 @@ bool UEditorEngine::Init()
 	const ImVec4 White = { 1, 1, 1, 1 };
 	const ImVec4 Green = { 0.40f, 0.80f, 0.30f, 1.0f };
 
-	Save = { "Save",   "Save Current Scene",UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarSaveIcon),  White, { EKeyCode::S, true } };
+	Save = { "Save",   "Save Current Scene",UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarSaveIcon),  White,{ EKeyCode::S, true } };
 
-	Play = { "Play",   "Play World",        UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarPlayIcon),  Green, { EKeyCode::P, false, true } };
+	Play = { "Play",   "Play World",        UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarPlayIcon),  Green,{ EKeyCode::P, false, true } };
 
 	Play.CanExecute = [this]()->bool {return !PlayWorld; };
 	Play.Execute = [this]() { RequestPlaySession(); };
 
-	Pause = { "Pause",  "Pause",			UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarPauseIcon), White, { EKeyCode::Pause } };
+	Pause = { "Pause",  "Pause",			UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarPauseIcon), White,{ EKeyCode::Pause } };
 
 	Pause.CanExecute = [this]()->bool {return !bIsPaused && PlayWorld; };
 	Pause.Execute = [this]() { bIsPaused = true; };
 
 
-	Resume = { "Resume", "Resume",          UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarPlayIcon),  White, { EKeyCode::Pause } };
+	Resume = { "Resume", "Resume",          UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarPlayIcon),  White,{ EKeyCode::Pause } };
 
 	Resume.CanExecute = [this]()->bool {return bIsPaused && PlayWorld; };
 	Resume.Execute = [this]() { bIsPaused = false; };
 
-	StepFrame = { "Step", "Step One Frame", UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarStepIcon),  White, {} };
+	StepFrame = { "Step", "Step One Frame", UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarStepIcon),  White,{} };
 
 	StepFrame.CanExecute = [this]()->bool {return bIsPaused && PlayWorld; };
 	StepFrame.Execute = [this]() { bStepRequested = true; };
 
 
-	Stop = { "Stop",   "Stop",				UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarStopIcon),  White, { EKeyCode::Escape } };
+	Stop = { "Stop",   "Stop",				UAssetManager::Get().LoadTexture(EditorResourcePaths::ToolbarStopIcon),  White,{ EKeyCode::Escape } };
 
 	Stop.CanExecute = [this]()->bool {return PlayWorld; };
 	Stop.Execute = [this]() { RequestEndPlayMap(); };
@@ -886,14 +893,18 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
 	// Pass 1
-	FProjectedShadowInfo DirectionalShadow;
-	const bool bDirectionalShadow = View.RenderMode.ViewMode == EViewMode::Lit
-		&& SettingsPanel->GetSettings().bDrawPrimitives
-		&& BuildDirectionalShadowInfo(ViewWorld.GetScene(), DirectionalShadow);
+	const bool bShadowView = View.RenderMode.ViewMode == EViewMode::Lit && SettingsPanel->GetSettings().bDrawPrimitives;
 
-	if (bDirectionalShadow)
+	FProjectedShadowInfo DirectionalShadow;
+	FProjectedShadowInfo SpotShadow;
+	const bool bDirectionalShadow = bShadowView && BuildDirectionalShadowInfo(ViewWorld.GetScene(), DirectionalShadow);
+	const bool bSpotShadow = bShadowView && BuildSpotShadowInfo(ViewWorld.GetScene(), SpotShadow);
+
+	if (bDirectionalShadow || bSpotShadow)
 	{
-		Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(), DirectionalShadow);
+		Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(),
+			bDirectionalShadow ? &DirectionalShadow : nullptr,
+			bSpotShadow ? &SpotShadow : nullptr);
 	}
 
 	Renderer->BindShadowResources(bDirectionalShadow ? &DirectionalShadow : nullptr);
