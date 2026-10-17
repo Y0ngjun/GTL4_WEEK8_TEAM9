@@ -93,8 +93,9 @@ public:
 	void CaptureViewportSettings();
 
 	void SetDirectionalShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { DirectionalShadowMapQuery = std::move(InQuery); }
-	void SetSpotShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { SpotShadowMapQuery = std::move(InQuery); }
+	void SetSpotShadowMapQuery(std::function<ID3D11ShaderResourceView* (uint32)> InQuery) { SpotShadowMapQuery = std::move(InQuery); }
 	void SetPointShadowMapQuery(std::function<ID3D11ShaderResourceView* (uint32)> InQuery) { PointShadowMapQuery = std::move(InQuery); }
+	void SetShadowMemoryQuery(std::function<uint64()> InQuery) { ShadowMemoryQuery = std::move(InQuery); }
 
 private:
 	static constexpr float SectionGap = 10.0f;
@@ -109,6 +110,7 @@ private:
 	FEditorSettings Settings;
 
 	std::function<ID3D11ShaderResourceView* ()> DirectionalShadowMapQuery;
-	std::function<ID3D11ShaderResourceView* ()> SpotShadowMapQuery;
+	std::function<ID3D11ShaderResourceView* (uint32)> SpotShadowMapQuery;
 	std::function<ID3D11ShaderResourceView* (uint32)> PointShadowMapQuery;
+	std::function<uint64 ()> ShadowMemoryQuery;
 };

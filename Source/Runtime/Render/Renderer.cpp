@@ -121,16 +121,6 @@ bool FRenderer::Init()
 	HTR_LOG(Info, "[Renderer] required depth graphics program and tile culling CS initialized");
 	GPUOcclusion.Init();   // 실패해도 오클루전만 못 쓸 뿐 렌더링은 된다
 
-	if (!DirectionalShadowTarget.Ensure(1024, 1, false))
-	{
-		HTR_LOG(Warning, "[Renderer] directional shadow target unavailable");
-	}
-
-	if (!SpotShadowTarget.Ensure(1024, 1, false))
-	{
-		HTR_LOG(Warning, "[Renderer] spot shadow target unavailable");
-	}
-
 	PointDepthShader = FRenderResourceManager::FindShaderProgram("Resources/Shader/PointShadowDepthShader.hlsl");
 	if (!PointDepthShader)
 	{
@@ -738,7 +728,7 @@ void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShado
 	RenderCommand::GetContext()->PSSetSamplers(1, 1, ShadowSampler.GetAddressOf());
 }
 
-void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow)
+void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FShadowSceneSetup& Setup)
 {
 	SCOPE_CYCLE_COUNTER(STAT_ShadowDepths);
 
@@ -751,26 +741,32 @@ void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShado
 	RenderCommand::BindConstantBuffer(0, ShadowViewCB.get(), EShaderBindFlagBits::Vertex);
 	RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
 
-	if (DirectionalShadow && DirectionalShadowTarget.Ensure(1024, 1, false))
+	if (Setup.bHasDirectional && DirectionalShadowTarget.Ensure(ShadowMapResolution, 1, false))
 	{
-		RenderShadowDepth(DirectionalShadowTarget, 0, Scene, *DirectionalShadow);
+		RenderShadowDepth(DirectionalShadowTarget, 0, Scene, Setup.Directional);
 	}
 
-	if (SpotShadow && SpotShadowTarget.Ensure(1024, 1, false))
+	if (Setup.NumSpots > 0 && SpotShadowTarget.Ensure(ShadowMapResolution, MaxShadowedSpotLights, false))
 	{
-		RenderShadowDepth(SpotShadowTarget, 0, Scene, *SpotShadow);
+		for (uint32 Index = 0; Index < Setup.NumSpots; ++Index)
+		{
+			RenderShadowDepth(SpotShadowTarget, Index, Scene, Setup.Spots[Index]);
+		}
 	}
 
-	if (PointShadow && PointDepthShader && PointShadowTarget.Ensure(1024, CubeFaceCount, true))
+	if (Setup.NumPoints > 0 && PointDepthShader && PointShadowTarget.Ensure(ShadowMapResolution, MaxShadowedPointLights * CubeFaceCount, true))
 	{
 		RenderCommand::BindShaderProgram(PointDepthShader);
 		RenderCommand::BindConstantBuffer(0, ShadowViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
-		const float InvRadius = 1.0f / std::max(PointShadow->Radius, 0.001f);
-		for (uint32 Face = 0; Face < CubeFaceCount; ++Face)
+		for (uint32 Index = 0; Index < Setup.NumPoints; ++Index)
 		{
-			RenderShadowDepth(PointShadowTarget, Face, Scene, PointShadow->Faces[Face],
-				PointShadow->LightPosition, InvRadius);
+			const FPointShadowSetup& Point = Setup.Points[Index];
+			const float InvRadius = 1.0f / std::max(Point.Radius, 0.001f);
+			for (uint32 Face = 0; Face < CubeFaceCount; ++Face)
+			{
+				RenderShadowDepth(PointShadowTarget, Index * CubeFaceCount + Face, Scene, Point.Faces[Face], Point.LightPosition, InvRadius);
+			}
 		}
 	}
 

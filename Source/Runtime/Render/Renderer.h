@@ -15,6 +15,7 @@
 class FScene;
 struct FProjectedShadowInfo;
 struct FPointShadowSetup;
+struct FShadowSceneSetup;
 
 constexpr uint32 ObjectSlotBytes = 256;
 
@@ -110,28 +111,30 @@ public:
 
 	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
-
-
 	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow);
 	void RenderShadowDepthMaps(const FScene& Scene,
-		const FProjectedShadowInfo* DirectionalShadow,
-		const FProjectedShadowInfo* SpotShadow,
-		const FPointShadowSetup* PointShadow);
+		const FShadowSceneSetup& Setup);
 
 	ID3D11ShaderResourceView* GetDirectionalShadowDebugSRV() const
 	{
 		return DirectionalShadowTarget.IsValid() ? DirectionalShadowTarget.SliceSRVs[0].Get() : nullptr;
 	}
 
-	ID3D11ShaderResourceView* GetSpotShadowDebugSRV() const
+	ID3D11ShaderResourceView* GetSpotShadowDebugSRV(uint32 Slice) const
 	{
-		return SpotShadowTarget.IsValid() ? SpotShadowTarget.SliceSRVs[0].Get() : nullptr;
+		return (SpotShadowTarget.IsValid() && Slice < SpotShadowTarget.SliceCount) ? 
+			SpotShadowTarget.SliceSRVs[Slice].Get() : nullptr;
 	}
 
 	ID3D11ShaderResourceView* GetPointShadowDebugSRV(uint32 Face) const
 	{
 		return PointShadowTarget.IsValid() && Face < 
 			PointShadowTarget.SliceCount ? PointShadowTarget.SliceSRVs[Face].Get() : nullptr;
+	}
+
+	uint64 GetShadowMemoryBytes() const
+	{
+		return DirectionalShadowTarget.GetMemoryBytes() + SpotShadowTarget.GetMemoryBytes() + PointShadowTarget.GetMemoryBytes();
 	}
 
 private:

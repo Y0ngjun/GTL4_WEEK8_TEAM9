@@ -184,3 +184,28 @@ bool BuildPointShadowInfo(const FScene& Scene, FPointShadowSetup& OutSetup)
 	}
 	return false;
 }
+
+void BuildShadowSceneSetup(const FScene& Scene, FShadowSceneSetup& OutSetup)
+{
+	OutSetup = FShadowSceneSetup{};
+	OutSetup.bHasDirectional = BuildDirectionalShadowInfo(Scene, OutSetup.Directional);
+
+	for (const FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		if (!Proxy->IsVisible())
+		{
+			continue;
+		}
+
+		if (Proxy->GetLightType() == ELightType::Spot && OutSetup.NumSpots < MaxShadowedSpotLights)
+		{
+			const FSpotLightInfo& Info = static_cast<const FSpotLightSceneProxy*>(Proxy)->GetInfo();
+			OutSetup.Spots[OutSetup.NumSpots++] = MakeSpotShadowInfo(Info);
+		}
+		else if (Proxy->GetLightType() == ELightType::Point && OutSetup.NumPoints < MaxShadowedPointLights)
+		{
+			const FPointLightInfo& Info = static_cast<const FPointLightSceneProxy*>(Proxy)->GetInfo();
+			MakePointShadowInfo(Info, OutSetup.Points[OutSetup.NumPoints++]);
+		}
+	}
+}

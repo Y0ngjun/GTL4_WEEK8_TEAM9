@@ -240,13 +240,17 @@ bool UEditorEngine::Init()
 		{
 			return Renderer->GetDirectionalShadowDebugSRV();
 		});
-	SettingsPanel->SetSpotShadowMapQuery([this]()
+	SettingsPanel->SetSpotShadowMapQuery([this](uint32 Slice)
 		{
-			return Renderer->GetSpotShadowDebugSRV();
+			return Renderer->GetSpotShadowDebugSRV(Slice);
 		});
 	SettingsPanel->SetPointShadowMapQuery([this](uint32 Face)
 		{
 			return Renderer->GetPointShadowDebugSRV(Face);
+		});
+	SettingsPanel->SetShadowMemoryQuery([this]()
+		{
+			return Renderer->GetShadowMemoryBytes();
 		});
 
 	SkyboxRenderer = MakeUnique<FSkyboxRenderer>();
@@ -897,28 +901,18 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
 	// Pass 1
+	FShadowSceneSetup ShadowSetup;
 	const bool bShadowView = View.RenderMode.ViewMode == EViewMode::Lit && SettingsPanel->GetSettings().bDrawPrimitives;
-
-	FProjectedShadowInfo DirectionalShadow;
-	FProjectedShadowInfo SpotShadow;
-	FPointShadowSetup PointShadow;
-
-	const bool bDirectionalShadow = bShadowView && BuildDirectionalShadowInfo(ViewWorld.GetScene(), DirectionalShadow);
-	const bool bSpotShadow = bShadowView && BuildSpotShadowInfo(ViewWorld.GetScene(), SpotShadow);
-	const bool bPointShadow = bShadowView && BuildPointShadowInfo(ViewWorld.GetScene(), PointShadow);
-
-	if (bDirectionalShadow || bSpotShadow || bPointShadow)
+	if (bShadowView)
 	{
-		Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(),
-			bDirectionalShadow ? &DirectionalShadow : nullptr,
-			bSpotShadow ? &SpotShadow : nullptr,
-			bPointShadow ? &PointShadow : nullptr);
+		BuildShadowSceneSetup(ViewWorld.GetScene(), ShadowSetup);
 	}
 
+	Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(), ShadowSetup);
 	Renderer->BindShadowResources(
-		bDirectionalShadow ? &DirectionalShadow : nullptr,
-		bSpotShadow ? &SpotShadow : nullptr,
-		bPointShadow ? &PointShadow : nullptr);
+		ShadowSetup.bHasDirectional ? &ShadowSetup.Directional : nullptr,
+		ShadowSetup.NumSpots > 0 ? &ShadowSetup.Spots[0] : nullptr,
+		ShadowSetup.NumPoints > 0 ? &ShadowSetup.Points[0] : nullptr);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);

@@ -6,6 +6,8 @@
 
 #include "Engine/World.h"
 
+#include "Render/Shadow/ShadowSetup.h"
+
 // 종료 시 렌더·에디터·뷰포트 설정을 함께 저장한다.
 FSettingsPanel::~FSettingsPanel()
 {
@@ -76,22 +78,31 @@ void FSettingsPanel::OnRender()
 	ImGui::EndDisabled();
 
 	//////////////////////////////////////////////////////////
+	if (ShadowMemoryQuery)
+	{
+		ImGui::Text("Shadow memory: %.1f MB", ShadowMemoryQuery() / (1024.0 * 1024.0));
+	}
 	if (DirectionalShadowMapQuery)
 	{
 		if (ID3D11ShaderResourceView* ShadowSRV = DirectionalShadowMapQuery())
 		{
 			ImGui::Dummy(ImVec2(0.0f, SectionGap));
 			ImGui::SeparatorText("Directional Shadow Map");
-			ImGui::Image((ImTextureID)ShadowSRV, ImVec2(256.0f, 256.0f));
+			ImGui::Image((ImTextureID)ShadowSRV, ImVec2(128.0f, 128.0f));
 		}
 	}
-	if (SpotShadowMapQuery)
+	if (SpotShadowMapQuery && SpotShadowMapQuery(0))
 	{
-		if (ID3D11ShaderResourceView* SpotSRV = SpotShadowMapQuery())
+		ImGui::Dummy(ImVec2(0.0f, SectionGap));
+		ImGui::SeparatorText("Spot Shadow Map");
+		ImGui::NewLine();
+		for (uint32 Index = 0; Index < MaxShadowedSpotLights; ++Index)
 		{
-			ImGui::Dummy(ImVec2(0.0f, SectionGap));
-			ImGui::SeparatorText("Spot Shadow Map");
-			ImGui::Image((ImTextureID)SpotSRV, ImVec2(256.0f, 256.0f));
+			if (ID3D11ShaderResourceView* ShadowSRV = SpotShadowMapQuery(Index))
+			{
+				ImGui::SameLine();
+				ImGui::Image((ImTextureID)ShadowSRV, ImVec2(64.0f, 64.0f));
+			}
 		}
 	}
 	if (PointShadowMapQuery && PointShadowMapQuery(0))
@@ -99,16 +110,20 @@ void FSettingsPanel::OnRender()
 		ImGui::Dummy(ImVec2(0.0f, SectionGap));
 		ImGui::SeparatorText("Point Shadow Cube");
 		const char* FaceNames[] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
-		for (uint32 Face = 0; Face < 6; ++Face)
+		for (uint32 Index = 0; Index < MaxShadowedPointLights; ++Index)
 		{
-			if (Face % 3 != 0)
+			if (ID3D11ShaderResourceView* ShadowSRV = PointShadowMapQuery(Index * CubeFaceCount))
 			{
-				ImGui::SameLine();
+				ImGui::NewLine();
+				for (uint32 Face = 0; Face < 6; ++Face)
+				{
+					ImGui::SameLine();
+					ImGui::BeginGroup();
+					ImGui::TextUnformatted(FaceNames[Face]);
+					ImGui::Image((ImTextureID)PointShadowMapQuery(Index * CubeFaceCount + Face), ImVec2(48.0f, 48.0f));
+					ImGui::EndGroup();
+				}
 			}
-			ImGui::BeginGroup();
-			ImGui::TextUnformatted(FaceNames[Face]);
-			ImGui::Image((ImTextureID)PointShadowMapQuery(Face), ImVec2(80.0f, 80.0f));
-			ImGui::EndGroup();
 		}
 	}
 	//////////////////////////////////////////////////////////

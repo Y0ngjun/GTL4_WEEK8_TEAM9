@@ -11,18 +11,9 @@ constexpr float SpotShadowNearClip = 0.1f;
 constexpr float PointShadowNearClip = 0.1f;
 constexpr uint32 CubeFaceCount = 6;
 
-struct FShadowConstants
-{
-	FMatrix DirectionalShadowViewProjection;
-	FMatrix SpotShadowViewProjection;
-	uint32 bHasDirectionalShadow = 0;
-	uint32 bHasSpotShadow = 0;
-	uint32 bHasPointShadow = 0;
-	float PointShadowInvRadius = 0.0f;
-	FVector PointShadowLightPosition{};
-	float Padding = 0.0f;
-};
-static_assert(sizeof(FShadowConstants) == 160, "HLSL b5 레이아웃과 같아야 한다");
+constexpr uint32 MaxShadowedSpotLights = 4;
+constexpr uint32 MaxShadowedPointLights = 4;
+constexpr uint32 ShadowMapResolution = 1024;
 
 struct FProjectedShadowInfo
 {
@@ -38,6 +29,31 @@ struct FPointShadowSetup
 	FVector LightPosition;
 	float Radius = 0.0f;
 };
+
+struct FShadowSceneSetup
+{
+	bool bHasDirectional = false;
+	FProjectedShadowInfo Directional;
+
+	uint32 NumSpots = 0;
+	FProjectedShadowInfo Spots[MaxShadowedSpotLights];
+
+	uint32 NumPoints = 0;
+	FPointShadowSetup Points[MaxShadowedPointLights];
+};
+
+struct FShadowConstants
+{
+	FMatrix DirectionalShadowViewProjection;
+	FMatrix SpotShadowViewProjection;
+	uint32 bHasDirectionalShadow = 0;
+	uint32 bHasSpotShadow = 0;
+	uint32 bHasPointShadow = 0;
+	float PointShadowInvRadius = 0.0f;
+	FVector PointShadowLightPosition{};
+	float Padding = 0.0f;
+};
+static_assert(sizeof(FShadowConstants) == 160, "HLSL b5 레이아웃과 같아야 한다");
 
 struct FShadowDepthConstants
 {
@@ -62,3 +78,5 @@ bool BuildSpotShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutShadow);
 // Point
 void MakePointShadowInfo(const FPointLightInfo& Point, FPointShadowSetup& OutSetup);
 bool BuildPointShadowInfo(const FScene& Scene, FPointShadowSetup& OutSetup);
+
+void BuildShadowSceneSetup(const FScene& Scene, FShadowSceneSetup& OutSetup);
