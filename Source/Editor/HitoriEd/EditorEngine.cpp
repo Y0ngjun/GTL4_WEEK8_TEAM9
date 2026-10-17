@@ -917,7 +917,8 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 
 	Renderer->BindShadowResources(
 		bDirectionalShadow ? &DirectionalShadow : nullptr,
-		bSpotShadow ? &SpotShadow : nullptr);
+		bSpotShadow ? &SpotShadow : nullptr,
+		bPointShadow ? &PointShadow : nullptr);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);

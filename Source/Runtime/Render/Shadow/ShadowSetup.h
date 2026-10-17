@@ -17,9 +17,12 @@ struct FShadowConstants
 	FMatrix SpotShadowViewProjection;
 	uint32 bHasDirectionalShadow = 0;
 	uint32 bHasSpotShadow = 0;
-	float Padding[2] = {};
+	uint32 bHasPointShadow = 0;
+	float PointShadowInvRadius = 0.0f;
+	FVector PointShadowLightPosition{};
+	float Padding = 0.0f;
 };
-static_assert(sizeof(FShadowConstants) == 144, "HLSL b5 레이아웃(matrix + matrix + uint + uint + float2)과 같아야 한다");
+static_assert(sizeof(FShadowConstants) == 160, "HLSL b5 레이아웃과 같아야 한다");
 
 struct FProjectedShadowInfo
 {

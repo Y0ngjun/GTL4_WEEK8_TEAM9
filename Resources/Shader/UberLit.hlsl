@@ -334,7 +334,9 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #endif
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float3 Il = Light.Color * DistanceAttenuation * GeoFactor;
+            
+            float Shadow = LightIndex == 0u ? GetPointShadow(WorldPosition) : 1.0f;
+            float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
         }
         else

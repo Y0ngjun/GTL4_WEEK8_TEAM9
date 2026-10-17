@@ -7,11 +7,15 @@ cbuffer ShadowConstants : register(b5)
     matrix SpotShadowViewProjection;
     uint bHasDirectionalShadow;
     uint bHasSpotShadow;
+    uint bHasPointShadow;
+    float PointShadowInvRadius;
+    float3 PointShadowLightPosition;
     float2 ShadowPadding;
 }
 
 Texture2DArray DirectionalShadowMap : register(t12);
 Texture2DArray SpotShadowMap : register(t13);
+TextureCubeArray PointShadowMap : register(t14);
 SamplerState ShadowPointSampler : register(s1);
 
 float3 ClipToShadowCoord(float4 Clip)
@@ -33,7 +37,7 @@ float CompareShadowDepth(Texture2DArray ShadowMap, float Slice, float3 ShadowCoo
     }
     
     float StoredDepth = ShadowMap.SampleLevel(ShadowPointSampler, float3(ShadowCoord.xy, Slice), 0.0f).r;
-    return ShadowCoord.z - 0.005f > StoredDepth ? 0.0f : 1.0f;
+    return ShadowCoord.z > StoredDepth ? 0.0f : 1.0f;
 }
 
 float GetDirectionalShadow(float3 WorldPosition)
@@ -59,5 +63,24 @@ float GetSpotShadow(float3 WorldPosition)
         return 1.0f;
     }
     return CompareShadowDepth(SpotShadowMap, 0.0f, ClipToShadowCoord(Clip));
+}
+
+float GetPointShadow(float3 WorldPosition)
+{
+    if (bHasPointShadow == 0u)
+    {
+        return 1.0f;
+    }
+
+    float3 LightToPixel = WorldPosition - PointShadowLightPosition;
+    float MyDistance = length(LightToPixel) * PointShadowInvRadius;
+    if (MyDistance > 1.0f)
+    {
+        return 1.0f;
+    }
+    
+    float StoredDistance = PointShadowMap.SampleLevel(ShadowPointSampler, float4(LightToPixel, 0.0f), 0.0f).r;
+    
+    return MyDistance > StoredDistance ? 0.0f : 1.0f;
 }
 #endif

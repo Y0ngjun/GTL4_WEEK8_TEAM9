@@ -702,7 +702,7 @@ void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix&
 	RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
 
-void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow)
+void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow)
 {
 	FShadowConstants Constants{};
 
@@ -720,12 +720,21 @@ void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShado
 		Constants.bHasSpotShadow = 1;
 	}
 
+	const bool bPoint = PointShadow && PointShadowTarget.IsValid();
+	if (bPoint)
+	{
+		Constants.bHasPointShadow = 1;
+		Constants.PointShadowLightPosition = PointShadow->LightPosition;
+		Constants.PointShadowInvRadius = 1.0f / std::max(PointShadow->Radius, 0.001f);
+	}
+
 	RenderCommand::UpdateBufferData(ShadowCB.get(), &Constants);
 	RenderCommand::BindConstantBuffer(5, ShadowCB.get(), EShaderBindFlagBits::Pixel);
 	RenderCommand::BindShaderResource(12, bDirectional ? DirectionalShadowTarget.ArraySRV.Get() : nullptr,
 		EShaderBindFlagBits::Pixel);
 	RenderCommand::BindShaderResource(13, bSpot ? SpotShadowTarget.ArraySRV.Get() : nullptr,
 		EShaderBindFlagBits::Pixel);
+	RenderCommand::BindShaderResource(14, bPoint ? PointShadowTarget.ArraySRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 	RenderCommand::GetContext()->PSSetSamplers(1, 1, ShadowSampler.GetAddressOf());
 }
 

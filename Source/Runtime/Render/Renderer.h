@@ -112,7 +112,7 @@ public:
 
 
 
-	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow);
+	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow);
 	void RenderShadowDepthMaps(const FScene& Scene,
 		const FProjectedShadowInfo* DirectionalShadow,
 		const FProjectedShadowInfo* SpotShadow,
