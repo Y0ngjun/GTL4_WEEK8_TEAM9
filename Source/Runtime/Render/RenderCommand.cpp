@@ -254,15 +254,16 @@ void RenderCommand::BeginRenderPass(const FRenderingInfo& RenderingInfo)
 		RTVs.Add(RenderTargetDesc.Texture->GetRTV());
 	}
 
-	ID3D11DepthStencilView* DSV = nullptr;
-	if (RenderingInfo.DepthStencil.Texture != nullptr)
+	const FRenderingDesc& DepthDesc = RenderingInfo.DepthStencil;
+	ID3D11DepthStencilView* DSV = DepthDesc.DSV;
+	if (!DSV && DepthDesc.Texture)
 	{
-		FClearValue dsvClearValue = RenderingInfo.DepthStencil.ClearValue;
-		DSV = RenderingInfo.DepthStencil.Texture->GetDSV();
-		if (RenderingInfo.DepthStencil.LoadOp == ERenderTargetLoadOp::Clear)
-		{
-			RenderDevice->GetContext()->ClearDepthStencilView(RenderingInfo.DepthStencil.Texture->GetDSV(), D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, dsvClearValue.DepthClearValue, dsvClearValue.StencilClearValue);
-		}
+		DSV = DepthDesc.Texture->GetDSV();
+	}
+	if (DSV && DepthDesc.LoadOp == ERenderTargetLoadOp::Clear)
+	{
+		RenderDevice->GetContext()->ClearDepthStencilView(DSV, DepthDesc.ClearFlags,
+			DepthDesc.ClearValue.DepthClearValue, DepthDesc.ClearValue.StencilClearValue);
 	}
 	RenderDevice->GetContext()->OMSetRenderTargets((uint32)RTVs.Num(), RTVs.GetData(), DSV);
 
