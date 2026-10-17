@@ -275,8 +275,9 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
                 PrepareSpotShadow(World, Index, Slot.Data);
             else if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Directional)
                 PrepareDirectionalShadow(World, Index, Slot.Data);
+            else if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Point)
+                PreparePointShadow(World, Index, Slot.Data);
         }
-        // Point는 해당 구현 단계까지 ShadowIndex를 무효로 유지한다.
         Slot.PreparedFrame = FrameNumber;
     }
     return &Slot.Data;
@@ -287,6 +288,53 @@ void FSceneRenderer::ReleaseWorldShadows(uint32 ResourceIndex)
     if (ResourceIndex >= MaxShadowResourceSlots) return;
     WorldShadowFrames[ResourceIndex].Data.ResetFrame();
     WorldShadowFrames[ResourceIndex].PreparedFrame = 0;
+}
+
+void FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame)
+{
+    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
+    const auto* Light = static_cast<const FPointLightSceneProxy*>(Request.Light);
+    const FPointLightInfo& Point = Light->GetInfo();
+    // D3D Cube 순서 +X,-X,+Y,-Y,+Z,-Z. 면의 Up도 Cube 조회 규약에 맞춘다.
+    const FVector Directions[] = {FVector(1,0,0), FVector(-1,0,0), FVector(0,1,0), FVector(0,-1,0), FVector(0,0,1), FVector(0,0,-1)};
+    const FVector Ups[] = {FVector(0,1,0), FVector(0,1,0), FVector(0,0,-1), FVector(0,0,1), FVector(0,1,0), FVector(0,1,0)};
+    FCameraProjection Projection;
+    Projection.FovDegrees = 90.0f;
+    constexpr float DefaultShadowNear = 0.01f;
+    Projection.NearClip = std::min(DefaultShadowNear, Point.AttenuationRadius * 0.01f);
+    Projection.FarClip = Point.AttenuationRadius;
+    const FMatrix ProjectionMatrix = Projection.GetMatrix(1.0f);
+    for (uint32 Face = 0; Face < FTextureCubeArray::FaceCount; ++Face)
+    {
+        const FVector& Forward = Directions[Face];
+        const FVector& Up = Ups[Face];
+        const FVector Right = FVector::Cross(Up, Forward);
+        // 엔진의 View 축은 +X 전방, +Y 오른쪽, +Z 위쪽이다.
+        FMatrix Rotation = FMatrix::Identity;
+        Rotation.SetAxis(0, Forward);
+        Rotation.SetAxis(1, Right);
+        Rotation.SetAxis(2, Up);
+        const FMatrix View = FMatrix::MakeTranslation(Point.Position * -1.0f) * Rotation.GetTransposed();
+        FShadowDepthPassInfo Pass;
+        Pass.RequestIndex = RequestIndex;
+        Pass.ArraySlice = Request.ShadowMapIndex * FTextureCubeArray::FaceCount + Face;
+        Pass.ViewProjection = View * ProjectionMatrix;
+        Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
+        BuildShadowCasterQueue(World, Pass);
+        Frame.ShadowDepthPassInfos.Add(std::move(Pass));
+    }
+
+    // 조회 정보는 Light당 하나다. Cube 조회에는 6면 행렬 대신 위치와 Cube 번호를 쓴다.
+    FShadowInfo Info;
+    Info.LightPosition = Point.Position;
+    Info.InvRadius = 1.0f / Point.AttenuationRadius;
+    Info.ShadowMapIndex = Request.ShadowMapIndex;
+    Info.LightType = static_cast<uint32>(ELightType::Point);
+    Info.Bias = Light->GetShadowBias() * Info.InvRadius;
+    Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
+    Info.MaxSlope = Light->GetShadowMaxSlope();
+    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
+    Frame.ShadowInfos.Add(Info);
 }
 
 void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame)

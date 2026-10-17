@@ -220,6 +220,20 @@ float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPositi
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
+float ComputePointShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
+{
+    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
+    FShadowInfo Info = ShadowInfos[ShadowIndex];
+    float3 FromLight = WorldPosition - Info.LightPosition;
+    float Distance = length(FromLight);
+    float ReceiverDepth = Distance * Info.InvRadius;
+    if (Distance <= 0.0f || ReceiverDepth >= 1.0f) return 1.0f;
+    // GPU가 방향으로 면과 UV를 선택한다. w는 물리 Slice가 아닌 Cube 번호다.
+    float StoredDepth = ShadowDepthCube.SampleLevel(ShadowSampler, float4(FromLight, Info.ShadowMapIndex), 0);
+    float Bias = ComputeShadowBias(Info, GeoNormal, -FromLight / Distance);
+    return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
+}
+
 Texture2D AlbedoTexture : register(t0);
 
 #if USE_NORMAL_MAP
@@ -394,7 +408,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #endif
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float3 Il = Light.Color * DistanceAttenuation * GeoFactor;
+            float Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+            float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
         }

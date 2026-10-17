@@ -41,6 +41,7 @@ private:
     uint64 FrameNumber = 0;
     void PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame);
     void PrepareDirectionalShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame);
+    void PreparePointShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame);
     void CaptureWorld(UWorld& World);
     void BuildRenderQueue(const FSceneView& View, FSceneRenderData& Data);
 
