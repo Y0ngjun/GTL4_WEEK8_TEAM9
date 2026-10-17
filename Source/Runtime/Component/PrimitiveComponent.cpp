@@ -71,10 +71,20 @@ bool UPrimitiveComponent::LineTraceComponent(const FRay& WorldRay, FHitResult& O
 	return Mesh && TraceMesh(WorldRay, *Mesh, GetWorldMatrix(), OutHit);
 }
 
+
+
 void UPrimitiveComponent::MarkRenderStateDirty()
 {
 	if (SceneProxy)
 		SceneProxy->GetScene()->MarkRenderStateDirty(SceneProxy);
+}
+
+// 에디터에서 그림자 관련 프로퍼티를 바꾸면 SceneProxy에 반영한다
+void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)
+{
+	Super::PostEditChangeProperty(Property);
+	if (Property.Name == "bCastShadow" || Property.Name == "bReceiveShadow")
+		MarkRenderStateDirty();
 }
 
 bool UPrimitiveComponent::LineTraceComponentLocal(const FRay& LocalRay, float& OutT)

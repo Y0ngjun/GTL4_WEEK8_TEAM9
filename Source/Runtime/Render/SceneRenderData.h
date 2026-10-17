@@ -4,6 +4,7 @@
 #include "Render/TileLightCulling.h"
 #include "Render/LightInfo.h"
 #include "Asset/LOD/StaticMeshLODSelector.h"
+#include "ShadowTypes.h"
 
 class UStaticMeshComponent;
 
@@ -14,6 +15,7 @@ struct FParticleSortInput
 };
 
 // Viewport가 소유하는 재사용 버퍼. World/Component/Proxy는 소유하지 않는다.
+// 카메라 뷰 하나의 렌더링에 필요한 모든 데이터를 담는다. (큐, 광원, 그림자, LOD, 파티클 등)
 struct FSceneRenderData
 {
     FRenderQueue RenderQueue;
@@ -26,6 +28,9 @@ struct FSceneRenderData
     TArray<uint8> SelectedLODs;
     TArray<FParticleSortInput> SortInputs;
     TArray<uint32> SortedParticleIds;
+
+	// 이번 뷰에서 생성할 광원별 그림자 데이터
+    TArray<FLightShadowData> LightShadows;
 
     void ResetFrame()
     {
@@ -46,5 +51,6 @@ struct FSceneRenderData
         RenderQueue.Reset();
         PendingStaticMeshes.Reset();
         LODInputs.Reset();
+        LightShadows.Reset();   
     }
 };

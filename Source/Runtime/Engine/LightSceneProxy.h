@@ -3,6 +3,7 @@
 #include "Component/AmbientLightComponent.h"
 #include "Component/DirectionalLightComponent.h"
 #include "Component/SpotLightComponent.h"
+#include "Render/ShadowSettings.h"
 
 class FScene;
 
@@ -22,10 +23,12 @@ public:
 	ULightComponentBase* GetComponent() const { return Component; }
 	ELightType GetLightType() const { return Type; }
 	FScene* GetScene() const { return Scene; }
+	const FShadowSettings& GetShadowSettings() const{ return ShadowSettings; }
 	bool IsVisible() const { return bVisible; }
 
 protected:
 	ULightComponentBase* Component = nullptr;
+	FShadowSettings ShadowSettings;
 	bool bVisible = true;
 
 private:
@@ -44,6 +47,7 @@ public:
 	{
 		const UAmbientLightComponent* Light = static_cast<const UAmbientLightComponent*>(Component);
 		Info = Light->GetAmbientLightInfo();
+		ShadowSettings.bCastShadows = false;
 		bVisible = Light->IsLightVisible();
 	}
 
@@ -62,11 +66,17 @@ public:
 	{
 		const UDirectionalLightComponent* Light = static_cast<const UDirectionalLightComponent*>(Component);
 		Info = Light->GetDirectionalLightInfo();
+		ShadowSettings = Light->GetShadowSettings();
+		ShadowDistance = Light->GetShadowDistance();
+
 		bVisible = Light->IsLightVisible();
 	}
 
+	float GetShadowDistance() const { return ShadowDistance; }
 	const FDirectionalLightInfo& GetInfo() const { return Info; }
 
+protected :
+	float ShadowDistance = 100.0f;
 private:
 	FDirectionalLightInfo Info;
 };
@@ -80,6 +90,7 @@ public:
 	{
 		const UPointLightComponent* Light = static_cast<const UPointLightComponent*>(Component);
 		Info = Light->GetPointLightInfo();
+		ShadowSettings = Light->GetShadowSettings();
 		bVisible = Light->IsLightVisible();
 	}
 
@@ -98,6 +109,7 @@ public:
 	{
 		const USpotLightComponent* Light = static_cast<const USpotLightComponent*>(Component);
 		Info = Light->GetSpotLightInfo();
+		ShadowSettings = Light->GetShadowSettings();
         // Outer cone과 감쇠 반경으로 제한된 조명 범위를 감싸는 구를 계산한다.
         if (CachedRadius != Info.AttenuationRadius || CachedCosOuter != Info.CosOuterCone)
         {

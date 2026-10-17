@@ -4,6 +4,7 @@
 #include "Math/Color.h"
 #include "Render/LightInfo.h"
 #include "Render/ColorWorkflow.h"
+#include "Render/ShadowSettings.h"
 
 class FLightSceneProxy;
 
@@ -14,6 +15,7 @@ class ULightComponentBase : public USceneComponent
 		PROPERTY(LightColor)
 		PROPERTY(Intensity)
 		PROPERTY(bVisible)
+		PROPERTY(bCastShadow)
 	REFLECT_END()
 
 public:
@@ -35,6 +37,9 @@ public:
 		const FLinearColor Color = (ColorWorkflow::bLinear ? FLinearColor(LightColor) : LightColor.ReinterpretAsLinear()) * Intensity;
 		return FVector(Color.R, Color.G, Color.B);
 	}
+	
+	bool IsCastingShadows() const { return bCastShadow; }
+	void SetCastingShadows(bool bInCastShadow) { bCastShadow = bInCastShadow;   MarkSceneProxyDirty(); }
 
 	virtual FLightSceneProxy* CreateSceneProxy() { return nullptr; }
 	FLightSceneProxy* GetSceneProxy() const { return SceneProxy; }
@@ -51,4 +56,5 @@ protected:
 private:
 	friend class FScene;
 	FLightSceneProxy* SceneProxy = nullptr;
+	bool bCastShadow = true;
 };

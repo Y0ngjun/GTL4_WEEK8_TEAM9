@@ -21,6 +21,14 @@ public:
 private:
     void CaptureWorld(UWorld& World);
     void BuildRenderQueue(const FSceneView& View, FSceneRenderData& Data);
+    
+    // 그림자를 그리는 광원을 수집한다.
+	void CollectShadowLights(const FScene& Scene, FSceneRenderData& Data);
+
+    // 그림자에 관련된 static Mesh들의 월드 AABB를 합친 SceneBounds를 계산한다.
+    // 월드 좌표를 Directional Light의 시점으로 변환하고 투영하는 행렬을 만드는 함수
+	void BuildDirectionalLightShadows(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data);
+    void BuildShadowCasterQueue(FShadowView& ShadowView);
 
     struct FPrimitiveSnapshot
     {

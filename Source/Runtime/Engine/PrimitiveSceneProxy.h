@@ -27,6 +27,10 @@ public:
     const FLODSphere& GetLODSphere() const { return LODSphere; }
     UStaticMesh* GetMesh() const { return Mesh; }
     bool IsVisible() const { return bVisible; }
+
+	bool IsCastingShadows() const { return bCastShadow; }
+    bool IsReceivingShadows() const { return bReceiveShadow; }
+
     uint8 GetLODCount() const { return RenderState ? RenderState->LODCount : 1; }
     const FMeshRenderState* GetRenderState() const { return RenderState.get(); }
     const float* GetLODThresholdsSq() const { return RenderState->LODThresholdSq; }
@@ -48,4 +52,6 @@ private:
     bool bQueuedForUpdate = false;
     bool bRenderStateQueued = false;
     bool bVisible = true;
+	bool bCastShadow = true;
+	bool bReceiveShadow = true;
 };

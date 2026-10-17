@@ -7,6 +7,8 @@
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/World.h"
 #include "Core/Stats/LightweightStats.h"
+#include "Engine/LightSceneProxy.h"
+#include "Camera/CameraProjection.h"
 #include <algorithm>
 #include <cassert>
 
@@ -56,6 +58,18 @@ void FSceneRenderer::PrepareView(UWorld& World, const FSceneView& View, FSceneRe
     }
     SCOPE_CYCLE_COUNTER(STAT_BuildRenderQueue);
     BuildRenderQueue(View, Data);
+
+    if (View.RenderMode.ViewMode == EViewMode::Lit)
+    {
+        // 먼저 Data.LightShadows에 광원별 그림자 데이터를 만듬
+		CollectShadowLights(World.GetScene(), Data);
+		// Directional Light 그림자만 시점별로 그릴 수 있도록 SceneView를 만듬
+		BuildDirectionalLightShadows(World.GetScene(), View, Data);
+
+		for (FLightShadowData& Shadow : Data.LightShadows)
+			for (FShadowView& ShadowView : Shadow.Views)
+				BuildShadowCasterQueue(ShadowView);
+    }
 }
 
 void FSceneRenderer::EndFrame()
@@ -186,4 +200,214 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
     SelectLODs(LODInputs, LODContext, SelectedLODs);
     for (uint32 I = 0; I < static_cast<uint32>(PendingStaticMeshes.Num()); ++I)
         PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
+}
+
+// 그림자를 그리는 광원을 수집
+void FSceneRenderer::CollectShadowLights(const FScene& Scene, FSceneRenderData& Data)
+{
+    const FLightSceneProxy* SelectedDirectional = nullptr;
+
+    // 조명 계산과 동일한 Directional 하나를 먼저 선택
+    for (const FLightSceneProxy* Proxy : Scene.Lights)
+    {
+        // visible한 Directional이면 SelectedDirectional을 덮어쓰기
+		if (Proxy->IsVisible() && Proxy->GetLightType() == ELightType::Directional)
+		{
+			SelectedDirectional = Proxy;
+		}
+    }
+
+    // 선택된 광원들의 그림자 요청 생성
+    for (const FLightSceneProxy* Proxy : Scene.Lights)
+    {
+        const ELightType Type = Proxy->GetLightType();
+
+        // Ambient는 제외해야 함.
+        if (!Proxy->IsVisible() || Type == ELightType::Ambient)
+            continue;
+
+        // Directional은 위에서 선택한 하나만 사용.
+        if (Type == ELightType::Directional &&
+            Proxy != SelectedDirectional)
+            continue;
+
+        const FShadowSettings& Settings = Proxy->GetShadowSettings();
+        if (!Settings.bCastShadows)
+            continue;
+
+        FLightShadowData Shadow;
+        FShadowMapDesc& MapDesc = Shadow.MapDesc;
+
+        // 광원 식별 정보와 설정 복사
+		Shadow.LightId = Proxy->GetComponent()->GetUUID();
+        Shadow.Settings = Settings;
+        MapDesc.Resolution = Settings.Resolution;
+
+        // 광원 종류에 따라 요청 정보 설정
+        switch (Type)
+        {
+        case ELightType::Directional:
+            Shadow.Type = EShadowProjection::Directional;
+            MapDesc.SliceCount = 1;
+            MapDesc.Type = EShadowMapType::Texture2D;
+            break;
+
+        case ELightType::Spot:
+            Shadow.Type = EShadowProjection::Spot;
+            MapDesc.SliceCount = 1;
+            MapDesc.Type = EShadowMapType::Texture2D;
+            break;
+
+        case ELightType::Point:
+            Shadow.Type = EShadowProjection::Point;
+            MapDesc.SliceCount = 6;
+            MapDesc.Type = EShadowMapType::TextureCube;
+            break;
+
+        default:
+            continue;
+        }
+
+        Data.LightShadows.Add(std::move(Shadow));
+    }
+}
+
+void FSceneRenderer::BuildDirectionalLightShadows(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data)
+{
+	// 그림자에 관련된 static Mesh들의 월드 AABB를 합친 SceneBounds를 계산
+    FBox SceneBounds{};
+	bool bHasBounds = false;
+
+	for (const FRenderableObject& Object : RenderObjects)
+	{
+		const auto* SnapShot = PrimitiveById.Find(Object.Id);
+		if (!SnapShot || !SnapShot->Primitive)
+			continue;
+		const auto* Proxy = SnapShot->Primitive->GetSceneProxy();
+        if (!Proxy || !Proxy->GetMesh())
+            continue;
+        if (!Proxy->IsCastingShadows() && !Proxy->IsReceivingShadows())
+            continue;
+
+		if (!bHasBounds)
+		{
+			SceneBounds = FBox{ Object.WorldBounds.Center - Object.WorldBounds.Extent, Object.WorldBounds.Center + Object.WorldBounds.Extent };
+			bHasBounds = true;
+		}
+		else
+		{
+			SceneBounds.Expand(FBox{ Object.WorldBounds.Center - Object.WorldBounds.Extent, Object.WorldBounds.Center + Object.WorldBounds.Extent });
+		}
+	}
+
+    if (!bHasBounds)
+        return;
+
+    // 중심과 반지름 계산
+    const FVector SceneCenter = (SceneBounds.Min + SceneBounds.Max) * 0.5f;
+    // SceneExtent는 중심에서 AABB 전체를 감싸는 구의 반지름
+    const FVector SceneExtent = (SceneBounds.Max - SceneBounds.Min) * 0.5f;
+    const float SceneRadius = std::max(SceneExtent.Size(), 0.01f);
+
+    for (const FLightSceneProxy* Proxy : Scene.Lights)
+    {
+        if (Proxy->IsVisible() && Proxy->GetLightType() == ELightType::Directional)
+        {
+            // 선택된 Directional Light에 대한 그림자 데이터를 찾는다.
+            for (FLightShadowData& Shadow : Data.LightShadows)
+            {
+                if (Shadow.LightId == Proxy->GetComponent()->GetUUID())
+                {
+					const auto* DirectionalProxy = static_cast<const FDirectionalLightSceneProxy*>(Proxy);
+
+					// Light View 계산
+
+					const FVector LightDirection = DirectionalProxy->GetInfo().Direction;
+					const FVector LightForward = LightDirection.GetSafeNormal();
+
+                    // Light 카메라의 위치
+					const FVector LightEye = SceneCenter - LightForward * (2.0f * SceneRadius);
+
+					// Light Up/Right 벡터 계산
+					const FVector UpGuide = std::fabs(LightForward.Z) > 0.99f ? FVector(0, 1, 0) : FVector(0, 0, 1);
+					const FVector LightRight = UpGuide.Cross(LightForward).GetSafeNormal();
+					const FVector LightUp = LightForward.Cross(LightRight).GetSafeNormal();
+
+					// Light View 행렬 계산
+                    FMatrix LightRotation = FMatrix::Identity;
+					LightRotation.SetAxis(0,LightForward);
+					LightRotation.SetAxis(1, LightRight);
+					LightRotation.SetAxis(2,LightUp);
+                    const FMatrix LightView =  FMatrix::MakeTranslation(-LightEye) * LightRotation.GetTransposed();
+
+					FCameraProjection ShadowProjection;
+					ShadowProjection.Mode = EProjectionMode::Orthographic;
+					ShadowProjection.OrthoWidth = SceneRadius * 2.0f;
+                    ShadowProjection.NearClip = SceneRadius;
+                    ShadowProjection.FarClip = SceneRadius * 3.0f;
+
+					// 정사각형 Shadow Map을 위해 OrthoWidth와 OrthoHeight를 동일하게 설정
+					const FMatrix LightProjection = ShadowProjection.GetMatrix(1.0f);
+
+                    // 완성한 행렬과 절두체를 FShadowView에 저장
+					FShadowView ShadowView;
+					ShadowView.ViewProjection = LightView * LightProjection;
+					ShadowView.Frustum = ExtractFrustumPlanes(ShadowView.ViewProjection);
+					ShadowView.TargetSlice = 0;
+
+					Shadow.Views.Add(std::move(ShadowView));
+
+
+                }
+            }
+        }
+    }
+
+
+}
+
+// TODO : 캡쳐한 전체 RenderObjects를 순회하지만, 나중에 BVH로 바꾸는게 좋을듯
+void FSceneRenderer::BuildShadowCasterQueue(FShadowView& ShadowView)
+{
+	FRenderQueue& CasterQueue = ShadowView.CasterQueue;
+	CasterQueue.Reset();
+
+	for (const FRenderableObject& Object : RenderObjects)
+	{
+		const auto* SnapShot = PrimitiveById.Find(Object.Id);
+		if (!SnapShot || !SnapShot->Primitive)
+			continue;
+		const auto* Proxy = SnapShot->Primitive->GetSceneProxy();
+		if (!Proxy || !Proxy->GetMesh())
+			continue;
+		if (!Proxy->IsCastingShadows())
+			continue;
+		auto* StaticMesh = Cast<UStaticMeshComponent>(SnapShot->Primitive);
+		if (!StaticMesh)
+			continue;
+
+		// 그림자 절두체와 AABB 검사
+		if (IsAABBInFrustum(Object.WorldBounds, ShadowView.Frustum))
+		{
+            // 이번 메시가 추가할 패킷
+
+            const uint32 FirstPacket = CasterQueue.Num();
+            StaticMesh->SubmitToRenderQueue(CasterQueue);
+
+            // section 별 반투명 material 에 대해 제거
+            // 제거하면서 순회하므로 뒤에서 앞으로 검사
+            for (uint32 Index = CasterQueue.Num(); Index > FirstPacket; --Index)
+            {
+                const uint32 PacketIndex = Index - 1;
+                const UMaterial* Material = CasterQueue[PacketIndex].Material;
+
+                if (!Material ||
+                    Material->ParamLayout != EMaterialParamLayout::StaticMesh ||
+                    Material->BlendState != EBlendState::Opaque)
+                {
+                    CasterQueue.RemoveAt(PacketIndex);
+                }
+            }
+		}
+	}
 }
