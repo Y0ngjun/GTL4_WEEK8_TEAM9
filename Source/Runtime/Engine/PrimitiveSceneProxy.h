@@ -26,6 +26,8 @@ public:
     const FMatrix& GetNormalMatrix() const { return NormalMatrix; }
     const FLODSphere& GetLODSphere() const { return LODSphere; }
     UStaticMesh* GetMesh() const { return Mesh; }
+    bool CastsShadow() const { return bCastShadow; }
+    bool ReceivesShadow() const { return bReceiveShadow; }
     bool IsVisible() const { return bVisible; }
     uint8 GetLODCount() const { return RenderState ? RenderState->LODCount : 1; }
     const FMeshRenderState* GetRenderState() const { return RenderState.get(); }
@@ -48,4 +50,6 @@ private:
     bool bQueuedForUpdate = false;
     bool bRenderStateQueued = false;
     bool bVisible = true;
+    bool bCastShadow = true;
+    bool bReceiveShadow = true;
 };
