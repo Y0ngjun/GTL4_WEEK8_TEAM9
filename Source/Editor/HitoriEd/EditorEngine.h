@@ -199,11 +199,24 @@ private:
 	static void OverrideViewWithDirectionalShadow(UWorld& World, FSceneView& View, EShadowDebugView Mode)
 	{
 		FProjectedShadowInfo Shadow;
-		const bool bBuilt = Mode == EShadowDebugView::Directional ?
+		bool bBuilt = Mode == EShadowDebugView::Directional ?
 			BuildDirectionalShadowInfo(World.GetScene(), Shadow)
 			: Mode == EShadowDebugView::Spot ?
 			BuildSpotShadowInfo(World.GetScene(), Shadow)
 			: false;
+
+		if (Mode >= EShadowDebugView::PointPosX)
+		{
+			FPointShadowSetup Point;
+			if (!BuildPointShadowInfo(World.GetScene(), Point))
+			{
+				return;
+			}
+
+			const uint32 Face = static_cast<uint32>(Mode) - static_cast<uint32>(EShadowDebugView::PointPosX);
+			Shadow = Point.Faces[Face];
+			bBuilt = true;
+		}
 
 		if (!bBuilt)
 		{

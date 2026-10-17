@@ -5,6 +5,26 @@
 #include "Camera/CameraProjection.h"
 #include "Engine/LightSceneProxy.h"
 
+namespace
+{
+	struct FCubeFaceAxes
+	{
+		FVector Forward;
+		FVector Right;
+		FVector Up;
+	};
+
+	const FCubeFaceAxes CubeFaceAxes[CubeFaceCount] =
+	{
+		{ FVector(1.0f,  0.0f,  0.0f), FVector(0.0f,  0.0f, -1.0f), FVector(0.0f,  1.0f,  0.0f) },   // +X
+		{ FVector(-1.0f,  0.0f,  0.0f), FVector(0.0f,  0.0f,  1.0f), FVector(0.0f,  1.0f,  0.0f) },   // -X
+		{ FVector(0.0f,  1.0f,  0.0f), FVector(1.0f,  0.0f,  0.0f), FVector(0.0f,  0.0f, -1.0f) },   // +Y
+		{ FVector(0.0f, -1.0f,  0.0f), FVector(1.0f,  0.0f,  0.0f), FVector(0.0f,  0.0f,  1.0f) },   // -Y
+		{ FVector(0.0f,  0.0f,  1.0f), FVector(1.0f,  0.0f,  0.0f), FVector(0.0f,  1.0f,  0.0f) },   // +Z
+		{ FVector(0.0f,  0.0f, -1.0f), FVector(-1.0f,  0.0f,  0.0f), FVector(0.0f,  1.0f,  0.0f) },   // -Z
+	};
+}
+
 bool ComputeShadowCasterBounds(const FScene& Scene, FAABB& OutBounds)
 {
 	FVector Min(FLT_MAX, FLT_MAX, FLT_MAX);
@@ -42,8 +62,13 @@ FMatrix MakeShadowViewMatrix(const FVector& Eye, const FVector& Forward)
 	const FVector UpHint = std::abs(Forward.Z) > 0.99f ? FVector(1.0f, 0.0f, 0.0f) : FVector(0.0f, 0.0f, 1.0f);
 	const FVector Right = FVector::Cross(UpHint, Forward).GetSafeNormal();
 	const FVector Up = FVector::Cross(Forward, Right);
+	return MakeShadowViewMatrix(Eye, Forward, Right, Up);
+}
 
-	const FMatrix Rotation(FVector4(Forward, 0.0f), FVector4(Right, 0.0f), FVector4(Up, 0.0f), FVector4(0.0f, 0.0f, 0.0f, 1.0f));
+FMatrix MakeShadowViewMatrix(const FVector& Eye, const FVector& Forward, const FVector& Right, const FVector& Up)
+{
+	const FMatrix Rotation(FVector4(Forward, 0.0f), FVector4(Right, 0.0f),
+		FVector4(Up, 0.0f), FVector4(0.0f, 0.0f, 0.0f, 1.0f));
 	return FMatrix::MakeTranslation(-Eye) * Rotation.GetTransposed();
 }
 
@@ -117,6 +142,44 @@ bool BuildSpotShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutShadow)
 		}
 
 		OutShadow = MakeSpotShadowInfo(static_cast<const FSpotLightSceneProxy*>(Proxy)->GetInfo());
+		return true;
+	}
+	return false;
+}
+
+void MakePointShadowInfo(const FPointLightInfo& Point, FPointShadowSetup& OutSetup)
+{
+	FCameraProjection Projection;
+	Projection.Mode = EProjectionMode::Perspective;
+	Projection.FovDegrees = 90.0f;
+	Projection.NearClip = PointShadowNearClip;
+	Projection.FarClip = std::max(Point.AttenuationRadius, PointShadowNearClip * 2.0f);
+	const FMatrix ProjectionMatrix = Projection.GetMatrix(1.0f);
+
+	for (uint32 Face = 0; Face < CubeFaceCount; ++Face)
+	{
+		const FCubeFaceAxes& Axes = CubeFaceAxes[Face];
+		FProjectedShadowInfo& Info = OutSetup.Faces[Face];
+		Info.ViewMatrix = MakeShadowViewMatrix(Point.Position, Axes.Forward, Axes.Right, Axes.Up);
+		Info.ProjectionMatrix = ProjectionMatrix;
+		Info.ViewProjection = Info.ViewMatrix * Info.ProjectionMatrix;
+		Info.Frustum = ExtractFrustumPlanes(Info.ViewProjection);
+	}
+
+	OutSetup.LightPosition = Point.Position;
+	OutSetup.Radius = Point.AttenuationRadius;
+}
+
+bool BuildPointShadowInfo(const FScene& Scene, FPointShadowSetup& OutSetup)
+{
+	for (const FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		if (!Proxy->IsVisible() || Proxy->GetLightType() != ELightType::Point)
+		{
+			continue;
+		}
+
+		MakePointShadowInfo(static_cast<const FPointLightSceneProxy*>(Proxy)->GetInfo(), OutSetup);
 		return true;
 	}
 	return false;

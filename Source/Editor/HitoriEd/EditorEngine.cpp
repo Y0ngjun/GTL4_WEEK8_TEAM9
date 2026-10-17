@@ -236,13 +236,17 @@ bool UEditorEngine::Init()
 			const FGameViewportClient* GameClient = GetPIEGameViewportClient();
 			return IsPIEInWindow() && GameClient && GameClient->HasCamera() && PIEViewport->IsVisible() && GameClient->GetViewRenderMode().ViewMode == EViewMode::Lit;
 		});
-	SettingsPanel->SetDirectionalShadowMapQuery([this]() 
+	SettingsPanel->SetDirectionalShadowMapQuery([this]()
 		{
-			return Renderer->GetDirectionalShadowDebugSRV(); 
+			return Renderer->GetDirectionalShadowDebugSRV();
 		});
 	SettingsPanel->SetSpotShadowMapQuery([this]()
 		{
 			return Renderer->GetSpotShadowDebugSRV();
+		});
+	SettingsPanel->SetPointShadowMapQuery([this](uint32 Face)
+		{
+			return Renderer->GetPointShadowDebugSRV(Face);
 		});
 
 	SkyboxRenderer = MakeUnique<FSkyboxRenderer>();
@@ -897,17 +901,23 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 
 	FProjectedShadowInfo DirectionalShadow;
 	FProjectedShadowInfo SpotShadow;
+	FPointShadowSetup PointShadow;
+
 	const bool bDirectionalShadow = bShadowView && BuildDirectionalShadowInfo(ViewWorld.GetScene(), DirectionalShadow);
 	const bool bSpotShadow = bShadowView && BuildSpotShadowInfo(ViewWorld.GetScene(), SpotShadow);
+	const bool bPointShadow = bShadowView && BuildPointShadowInfo(ViewWorld.GetScene(), PointShadow);
 
-	if (bDirectionalShadow || bSpotShadow)
+	if (bDirectionalShadow || bSpotShadow || bPointShadow)
 	{
 		Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(),
 			bDirectionalShadow ? &DirectionalShadow : nullptr,
-			bSpotShadow ? &SpotShadow : nullptr);
+			bSpotShadow ? &SpotShadow : nullptr,
+			bPointShadow ? &PointShadow : nullptr);
 	}
 
-	Renderer->BindShadowResources(bDirectionalShadow ? &DirectionalShadow : nullptr);
+	Renderer->BindShadowResources(
+		bDirectionalShadow ? &DirectionalShadow : nullptr,
+		bSpotShadow ? &SpotShadow : nullptr);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);

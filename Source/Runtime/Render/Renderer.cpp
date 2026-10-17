@@ -131,7 +131,13 @@ bool FRenderer::Init()
 		HTR_LOG(Warning, "[Renderer] spot shadow target unavailable");
 	}
 
-	ShadowViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
+	PointDepthShader = FRenderResourceManager::FindShaderProgram("Resources/Shader/PointShadowDepthShader.hlsl");
+	if (!PointDepthShader)
+	{
+		HTR_LOG(Warning, "[Renderer] point shadow depth shader not found");
+	}
+
+	ShadowViewCB = RenderCommand::CreateConstantBuffer(sizeof(FShadowDepthConstants));
 
 	ShadowCB = RenderCommand::CreateConstantBuffer(sizeof(FShadowConstants));
 
@@ -696,28 +702,38 @@ void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix&
 	RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
 
-void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShadow)
+void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow)
 {
 	FShadowConstants Constants{};
-	const bool bHasShadow = DirectionalShadow && DirectionalShadowTarget.IsValid();
-	if (bHasShadow)
+
+	const bool bDirectional = DirectionalShadow && DirectionalShadowTarget.IsValid();
+	if (bDirectional)
 	{
 		Constants.DirectionalShadowViewProjection = DirectionalShadow->ViewProjection;
 		Constants.bHasDirectionalShadow = 1;
 	}
 
+	const bool bSpot = SpotShadow && SpotShadowTarget.IsValid();
+	if (bSpot)
+	{
+		Constants.SpotShadowViewProjection = SpotShadow->ViewProjection;
+		Constants.bHasSpotShadow = 1;
+	}
+
 	RenderCommand::UpdateBufferData(ShadowCB.get(), &Constants);
 	RenderCommand::BindConstantBuffer(5, ShadowCB.get(), EShaderBindFlagBits::Pixel);
-	RenderCommand::BindShaderResource(12, bHasShadow ? DirectionalShadowTarget.ArraySRV.Get() : nullptr,
+	RenderCommand::BindShaderResource(12, bDirectional ? DirectionalShadowTarget.ArraySRV.Get() : nullptr,
+		EShaderBindFlagBits::Pixel);
+	RenderCommand::BindShaderResource(13, bSpot ? SpotShadowTarget.ArraySRV.Get() : nullptr,
 		EShaderBindFlagBits::Pixel);
 	RenderCommand::GetContext()->PSSetSamplers(1, 1, ShadowSampler.GetAddressOf());
 }
 
-void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow)
+void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow)
 {
 	SCOPE_CYCLE_COUNTER(STAT_ShadowDepths);
 
-	RenderCommand::UnbindShaderResources(12, 2, EShaderBindFlagBits::Pixel);
+	RenderCommand::UnbindShaderResources(12, 3, EShaderBindFlagBits::Pixel);
 	RenderCommand::BindShaderProgram(DepthShader);
 	RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
 	RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
@@ -736,10 +752,23 @@ void FRenderer::RenderShadowDepthMaps(const FScene& Scene, const FProjectedShado
 		RenderShadowDepth(SpotShadowTarget, 0, Scene, *SpotShadow);
 	}
 
+	if (PointShadow && PointDepthShader && PointShadowTarget.Ensure(1024, CubeFaceCount, true))
+	{
+		RenderCommand::BindShaderProgram(PointDepthShader);
+		RenderCommand::BindConstantBuffer(0, ShadowViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+
+		const float InvRadius = 1.0f / std::max(PointShadow->Radius, 0.001f);
+		for (uint32 Face = 0; Face < CubeFaceCount; ++Face)
+		{
+			RenderShadowDepth(PointShadowTarget, Face, Scene, PointShadow->Faces[Face],
+				PointShadow->LightPosition, InvRadius);
+		}
+	}
+
 	RenderCommand::GetContext()->OMSetRenderTargets(0, nullptr, nullptr);
 }
 
-void FRenderer::RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, const FScene& Scene, const FProjectedShadowInfo& Shadow)
+void FRenderer::RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, const FScene& Scene, const FProjectedShadowInfo& Shadow, const FVector& LightPosition, float InvLightRadius)
 {
 	ID3D11DeviceContext* Context = RenderCommand::GetContext();
 	ID3D11DepthStencilView* DSV = Target.SliceDSVs[Slice].Get();
@@ -748,9 +777,11 @@ void FRenderer::RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, cons
 	Context->ClearDepthStencilView(DSV, D3D11_CLEAR_DEPTH, 1.0f, 0);
 	RenderCommand::SetViewport(0, 0, Target.Resolution, Target.Resolution);
 
-	FViewConstants ShadowView{};
-	ShadowView.ViewProjection = Shadow.ViewProjection;
-	RenderCommand::UpdateBufferData(ShadowViewCB.get(), &ShadowView);
+	FShadowDepthConstants Constants{};
+	Constants.ViewProjection = Shadow.ViewProjection;
+	Constants.LightPosition = LightPosition;
+	Constants.InvLightRadius = InvLightRadius;
+	RenderCommand::UpdateBufferData(ShadowViewCB.get(), &Constants);
 
 	Scene.BVH.QueryCull(FrustumAllPlanesMask,
 		[&](const FBox& B, uint32& M)

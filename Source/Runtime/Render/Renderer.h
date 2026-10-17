@@ -14,6 +14,7 @@
 
 class FScene;
 struct FProjectedShadowInfo;
+struct FPointShadowSetup;
 
 constexpr uint32 ObjectSlotBytes = 256;
 
@@ -87,7 +88,7 @@ public:
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
-	
+
 	// 캐시된 스태틱 메시 경로: World::Gather가 조각별로 채운 묶음을 이번 프레임 불투명 패스에 넘긴다.
 	// 묶음 메모리는 World 소유이며 다음 Gather 전까지 유효하다. RenderQueueSorting이 묶음을 정렬하고 RenderOpaque가 그린다.
 	void ResetStaticDrawGroups() { StaticGroups.clear(); }
@@ -109,17 +110,28 @@ public:
 
 	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
+
+
+	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow);
+	void RenderShadowDepthMaps(const FScene& Scene,
+		const FProjectedShadowInfo* DirectionalShadow,
+		const FProjectedShadowInfo* SpotShadow,
+		const FPointShadowSetup* PointShadow);
+
 	ID3D11ShaderResourceView* GetDirectionalShadowDebugSRV() const
 	{
 		return DirectionalShadowTarget.IsValid() ? DirectionalShadowTarget.SliceSRVs[0].Get() : nullptr;
 	}
 
-	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow);
-	void RenderShadowDepthMaps(const FScene& Scene, const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow);
-
 	ID3D11ShaderResourceView* GetSpotShadowDebugSRV() const
 	{
 		return SpotShadowTarget.IsValid() ? SpotShadowTarget.SliceSRVs[0].Get() : nullptr;
+	}
+
+	ID3D11ShaderResourceView* GetPointShadowDebugSRV(uint32 Face) const
+	{
+		return PointShadowTarget.IsValid() && Face < 
+			PointShadowTarget.SliceCount ? PointShadowTarget.SliceSRVs[Face].Get() : nullptr;
 	}
 
 private:
@@ -169,11 +181,16 @@ private:
 	void EnsurePerObjectSlotCapacity(uint32 SlotCount);
 	void UploadPerObjectConstants();
 
-	void RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, const FScene& Scene, const FProjectedShadowInfo& Shadow);
+	void RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, const FScene& Scene, const FProjectedShadowInfo& Shadow,
+		const FVector& LightPosition = FVector(0.0f, 0.0f, 0.0f), float InvLightRadius = 0.0f);
 
 	TArray<FSortEntry> SortEntries;
 
 	FShadowDepthTarget DirectionalShadowTarget;
 
 	FShadowDepthTarget SpotShadowTarget;
+
+	FShadowDepthTarget PointShadowTarget;
+
+	FShaderProgram* PointDepthShader = nullptr;
 };

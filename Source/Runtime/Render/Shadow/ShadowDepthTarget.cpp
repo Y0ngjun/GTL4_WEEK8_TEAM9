@@ -46,7 +46,7 @@ bool FShadowDepthTarget::Ensure(uint32 InResolution, uint32 InSliceCount, bool b
 
 	if (FAILED(Device->CreateTexture2D(&Desc, nullptr, Texture.GetAddressOf())))
 	{
-		HTR_LOG(Error, "[Shadow] depth texture create faild ({}x{}, {} slices)", InResolution, InResolution, InSliceCount);
+		HTR_LOG(Error, "[Shadow] depth texture create failed ({}x{}, {} slices)", InResolution, InResolution, InSliceCount);
 		Reset();
 		return false;
 	}
@@ -62,7 +62,7 @@ bool FShadowDepthTarget::Ensure(uint32 InResolution, uint32 InSliceCount, bool b
 		Dsv.Texture2DArray.ArraySize = 1;
 		if (FAILED(Device->CreateDepthStencilView(Texture.Get(), &Dsv, SliceDSVs[Slice].GetAddressOf())))
 		{
-			HTR_LOG(Error, "[Shadow] slice DSV create faild (slice {})", Slice);
+			HTR_LOG(Error, "[Shadow] slice DSV create failed (slice {})", Slice);
 			Reset();
 			return false;
 		}
@@ -82,7 +82,7 @@ bool FShadowDepthTarget::Ensure(uint32 InResolution, uint32 InSliceCount, bool b
 	{
 		Srv.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
 		Srv.TextureCubeArray.MipLevels = 1;
-		Srv.TextureCubeArray.NumCubes = InSliceCount;
+		Srv.TextureCubeArray.NumCubes = InSliceCount / 6;
 	}
 	else
 	{

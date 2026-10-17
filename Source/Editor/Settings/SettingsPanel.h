@@ -11,7 +11,10 @@ class FViewportsPanel;
 class UWorld;
 struct ID3D11ShaderResourceView;
 
-enum class EShadowDebugView : int32 { Off, Directional, Spot };
+enum class EShadowDebugView : int32 {
+	Off, Directional, Spot,
+	PointPosX, PointNegX, PointPosY, PointNegY, PointPosZ, PointNegZ
+};
 
 struct FEditorSettings
 {
@@ -90,7 +93,8 @@ public:
 	void CaptureViewportSettings();
 
 	void SetDirectionalShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { DirectionalShadowMapQuery = std::move(InQuery); }
-	void SetSpotShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { SpotShadowMapQuery = std::move_if_noexcept(InQuery); }
+	void SetSpotShadowMapQuery(std::function<ID3D11ShaderResourceView* ()> InQuery) { SpotShadowMapQuery = std::move(InQuery); }
+	void SetPointShadowMapQuery(std::function<ID3D11ShaderResourceView* (uint32)> InQuery) { PointShadowMapQuery = std::move(InQuery); }
 
 private:
 	static constexpr float SectionGap = 10.0f;
@@ -106,4 +110,5 @@ private:
 
 	std::function<ID3D11ShaderResourceView* ()> DirectionalShadowMapQuery;
 	std::function<ID3D11ShaderResourceView* ()> SpotShadowMapQuery;
+	std::function<ID3D11ShaderResourceView* (uint32)> PointShadowMapQuery;
 };

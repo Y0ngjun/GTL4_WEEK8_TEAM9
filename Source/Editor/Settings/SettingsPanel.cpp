@@ -59,7 +59,8 @@ void FSettingsPanel::OnRender()
 	ImGui::Checkbox("Linear Workflow", &Settings.bLinearWorkflow);
 	ImGui::SetItemTooltip("Off: no sRGB decode/encode (gamma-space rendering), for comparison.");
 
-	const char* ShadowViewItems[] = { "Off", "Directional", "Spot" };
+	const char* ShadowViewItems[] = { "Off", "Directional", "Spot",
+		"Point +X", "Point -X", "Point +Y","Point -Y", "Point +Z", "Point -Z" };
 	ImGui::Combo("View From Shadow", &Settings.ShadowDebugView, ShadowViewItems, IM_ARRAYSIZE(ShadowViewItems));
 
 	// 톤매핑은 View별 Lit에서만 적용되므로, 보이는 View 중 Lit이 하나라도 있어야 조작할 의미가 있다
@@ -91,6 +92,23 @@ void FSettingsPanel::OnRender()
 			ImGui::Dummy(ImVec2(0.0f, SectionGap));
 			ImGui::SeparatorText("Spot Shadow Map");
 			ImGui::Image((ImTextureID)SpotSRV, ImVec2(256.0f, 256.0f));
+		}
+	}
+	if (PointShadowMapQuery && PointShadowMapQuery(0))
+	{
+		ImGui::Dummy(ImVec2(0.0f, SectionGap));
+		ImGui::SeparatorText("Point Shadow Cube");
+		const char* FaceNames[] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
+		for (uint32 Face = 0; Face < 6; ++Face)
+		{
+			if (Face % 3 != 0)
+			{
+				ImGui::SameLine();
+			}
+			ImGui::BeginGroup();
+			ImGui::TextUnformatted(FaceNames[Face]);
+			ImGui::Image((ImTextureID)PointShadowMapQuery(Face), ImVec2(80.0f, 80.0f));
+			ImGui::EndGroup();
 		}
 	}
 	//////////////////////////////////////////////////////////
@@ -187,23 +205,23 @@ bool FSettingsPanel::SaveSettings() const
 	File << "SingleViewIndex=" << Snapshot.MaximizedViewportIndex << "\n";
 
 	for (int32 Index = 0; Index < 4; ++Index)
-    {
-        File << "View" << Index << "Fov=" << Snapshot.ViewFov[Index] << "\n";
-        File << "View" << Index << "OrthoWidth=" << Snapshot.ViewOrthoWidth[Index] << "\n";
-        File << "View" << Index << "Preset=" << Snapshot.ViewPreset[Index] << "\n";
-        const FViewRenderMode& RenderMode = Snapshot.ViewRenderMode[Index];
-        File << "View" << Index << "ViewMode=" << ViewModeNames[static_cast<int32>(RenderMode.ViewMode)] << "\n";
-        File << "View" << Index << "LightingModel=" << LightingModelNames[static_cast<int32>(RenderMode.LightingModel)] << "\n";
-        File << "View" << Index << "ShadingModel=" << ShadingModelNames[static_cast<int32>(RenderMode.ShadingModel)] << "\n";
-        File << "View" << Index << "LocationX=" << Snapshot.ViewLocation[Index].X << "\n";
-        File << "View" << Index << "LocationY=" << Snapshot.ViewLocation[Index].Y << "\n";
-        File << "View" << Index << "LocationZ=" << Snapshot.ViewLocation[Index].Z << "\n";
-        File << "View" << Index << "RotationX=" << Snapshot.ViewRotation[Index].X << "\n";
-        File << "View" << Index << "RotationY=" << Snapshot.ViewRotation[Index].Y << "\n";
-        File << "View" << Index << "RotationZ=" << Snapshot.ViewRotation[Index].Z << "\n";
-        File << "View" << Index << "RotationW=" << Snapshot.ViewRotation[Index].W << "\n";
-    }
-    File.close();
+	{
+		File << "View" << Index << "Fov=" << Snapshot.ViewFov[Index] << "\n";
+		File << "View" << Index << "OrthoWidth=" << Snapshot.ViewOrthoWidth[Index] << "\n";
+		File << "View" << Index << "Preset=" << Snapshot.ViewPreset[Index] << "\n";
+		const FViewRenderMode& RenderMode = Snapshot.ViewRenderMode[Index];
+		File << "View" << Index << "ViewMode=" << ViewModeNames[static_cast<int32>(RenderMode.ViewMode)] << "\n";
+		File << "View" << Index << "LightingModel=" << LightingModelNames[static_cast<int32>(RenderMode.LightingModel)] << "\n";
+		File << "View" << Index << "ShadingModel=" << ShadingModelNames[static_cast<int32>(RenderMode.ShadingModel)] << "\n";
+		File << "View" << Index << "LocationX=" << Snapshot.ViewLocation[Index].X << "\n";
+		File << "View" << Index << "LocationY=" << Snapshot.ViewLocation[Index].Y << "\n";
+		File << "View" << Index << "LocationZ=" << Snapshot.ViewLocation[Index].Z << "\n";
+		File << "View" << Index << "RotationX=" << Snapshot.ViewRotation[Index].X << "\n";
+		File << "View" << Index << "RotationY=" << Snapshot.ViewRotation[Index].Y << "\n";
+		File << "View" << Index << "RotationZ=" << Snapshot.ViewRotation[Index].Z << "\n";
+		File << "View" << Index << "RotationW=" << Snapshot.ViewRotation[Index].W << "\n";
+	}
+	File.close();
 	return true;
 }
 
@@ -250,57 +268,57 @@ bool FSettingsPanel::LoadSettings()
 						TryParseModeName(ValueStr, ShadingModelNames, RenderMode.ShadingModel);
 				}
 				// 새 View 키는 NaN·잘못된 숫자·범위 밖 값을 무시한다.
-                for (int32 Index = 0; Index < 4; ++Index)
-                {
-                    FString Prefix = "View";
-                    Prefix += static_cast<char>('0' + Index);
-                    std::istringstream Number(ValueStr);
-                    float Value = 0;
-                    if (!(Number >> Value) || !std::isfinite(Value)) continue;
-                    if (Key == Prefix + "Fov" && Value >= 1 && Value <= 179)
-                        Settings.ViewFov[Index] = Value;
-                    else if (Key == Prefix + "OrthoWidth" && Value >= 0.01f)
-                        // 파일 값은 절대 상한으로 먼저 제한하고, 실제 View 비율 상한은 뷰포트 클라이언트가 적용한다.
-                        Settings.ViewOrthoWidth[Index] = FMath::Clamp(Value, 0.01f, 1000000.0f);
-                    else if (Key == Prefix + "Preset" && Value >= 0 && Value <= 7 && Value == static_cast<int32>(Value))
-                        Settings.ViewPreset[Index] = static_cast<int32>(Value);
-                    else if (Key == Prefix + "LocationX")
-                    {
-                        Settings.ViewLocation[Index].X = Value;
-                        LocationComponentMasks[Index] |= 1 << 0;
-                    }
-                    else if (Key == Prefix + "LocationY")
-                    {
-                        Settings.ViewLocation[Index].Y = Value;
-                        LocationComponentMasks[Index] |= 1 << 1;
-                    }
-                    else if (Key == Prefix + "LocationZ")
-                    {
-                        Settings.ViewLocation[Index].Z = Value;
-                        LocationComponentMasks[Index] |= 1 << 2;
-                    }
-                    else if (Key == Prefix + "RotationX")
-                    {
-                        Settings.ViewRotation[Index].X = Value;
-                        RotationComponentMasks[Index] |= 1 << 0;
-                    }
-                    else if (Key == Prefix + "RotationY")
-                    {
-                        Settings.ViewRotation[Index].Y = Value;
-                        RotationComponentMasks[Index] |= 1 << 1;
-                    }
-                    else if (Key == Prefix + "RotationZ")
-                    {
-                        Settings.ViewRotation[Index].Z = Value;
-                        RotationComponentMasks[Index] |= 1 << 2;
-                    }
-                    else if (Key == Prefix + "RotationW")
-                    {
-                        Settings.ViewRotation[Index].W = Value;
-                        RotationComponentMasks[Index] |= 1 << 3;
-                    }
-                }
-                if (Key == "DrawPrimitives") Settings.bDrawPrimitives = std::stoi(ValueStr);
+				for (int32 Index = 0; Index < 4; ++Index)
+				{
+					FString Prefix = "View";
+					Prefix += static_cast<char>('0' + Index);
+					std::istringstream Number(ValueStr);
+					float Value = 0;
+					if (!(Number >> Value) || !std::isfinite(Value)) continue;
+					if (Key == Prefix + "Fov" && Value >= 1 && Value <= 179)
+						Settings.ViewFov[Index] = Value;
+					else if (Key == Prefix + "OrthoWidth" && Value >= 0.01f)
+						// 파일 값은 절대 상한으로 먼저 제한하고, 실제 View 비율 상한은 뷰포트 클라이언트가 적용한다.
+						Settings.ViewOrthoWidth[Index] = FMath::Clamp(Value, 0.01f, 1000000.0f);
+					else if (Key == Prefix + "Preset" && Value >= 0 && Value <= 7 && Value == static_cast<int32>(Value))
+						Settings.ViewPreset[Index] = static_cast<int32>(Value);
+					else if (Key == Prefix + "LocationX")
+					{
+						Settings.ViewLocation[Index].X = Value;
+						LocationComponentMasks[Index] |= 1 << 0;
+					}
+					else if (Key == Prefix + "LocationY")
+					{
+						Settings.ViewLocation[Index].Y = Value;
+						LocationComponentMasks[Index] |= 1 << 1;
+					}
+					else if (Key == Prefix + "LocationZ")
+					{
+						Settings.ViewLocation[Index].Z = Value;
+						LocationComponentMasks[Index] |= 1 << 2;
+					}
+					else if (Key == Prefix + "RotationX")
+					{
+						Settings.ViewRotation[Index].X = Value;
+						RotationComponentMasks[Index] |= 1 << 0;
+					}
+					else if (Key == Prefix + "RotationY")
+					{
+						Settings.ViewRotation[Index].Y = Value;
+						RotationComponentMasks[Index] |= 1 << 1;
+					}
+					else if (Key == Prefix + "RotationZ")
+					{
+						Settings.ViewRotation[Index].Z = Value;
+						RotationComponentMasks[Index] |= 1 << 2;
+					}
+					else if (Key == Prefix + "RotationW")
+					{
+						Settings.ViewRotation[Index].W = Value;
+						RotationComponentMasks[Index] |= 1 << 3;
+					}
+				}
+				if (Key == "DrawPrimitives") Settings.bDrawPrimitives = std::stoi(ValueStr);
 				else if (Key == "DrawBoundingBox") Settings.bDrawBoundingBox = std::stoi(ValueStr);
 				else if (Key == "ShowUUID") Settings.bShowUUID = std::stoi(ValueStr);
 				else if (Key == "DrawGrid") Settings.bDrawGrid = std::stoi(ValueStr);
@@ -351,31 +369,31 @@ bool FSettingsPanel::LoadSettings()
 // 초기화된 카메라에 파일 설정을 적용하고 미저장 값은 초기 설정으로 채운다.
 void FSettingsPanel::SetViewportsPanel(FViewportsPanel* Value)
 {
-    ViewportsPanel = Value;
-    ApplyViewportSettings();
-    CaptureViewportSettings();
+	ViewportsPanel = Value;
+	ApplyViewportSettings();
+	CaptureViewportSettings();
 }
 
 // Transform·투영·표시·레이아웃을 저장용 설정에 복사한다.
 void FSettingsPanel::ReadViewportSettings(FEditorSettings& Out) const
 {
-    if (!ViewportsPanel) return;
-    Out.ViewportSplitHorizontal = ViewportsPanel->GetSplitRatio().Horizontal;
-    Out.ViewportSplitVertical = ViewportsPanel->GetSplitRatio().Vertical;
-    Out.bViewportMaximized = ViewportsPanel->IsSlotMaximized();
-    Out.MaximizedViewportIndex = ViewportsPanel->GetMaximizedSlotIndex();
-    for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
-    {
-        const auto& Camera = ViewportsPanel->GetEditorClient(Index)->GetCamera();
-        Out.ViewFov[Index] = Camera.Projection.FovDegrees;
-        Out.ViewOrthoWidth[Index] = Camera.Projection.OrthoWidth;
-        Out.ViewPreset[Index] = static_cast<int32>(ViewportsPanel->GetEditorClient(Index)->GetCameraPreset());
-        Out.ViewRenderMode[Index] = ViewportsPanel->GetEditorClient(Index)->GetViewRenderMode();
-        Out.ViewLocation[Index] = Camera.Location;
-        Out.ViewRotation[Index] = Camera.Rotation;
-        Out.bViewLocationSaved[Index] = true;
-        Out.bViewRotationSaved[Index] = true;
-    }
+	if (!ViewportsPanel) return;
+	Out.ViewportSplitHorizontal = ViewportsPanel->GetSplitRatio().Horizontal;
+	Out.ViewportSplitVertical = ViewportsPanel->GetSplitRatio().Vertical;
+	Out.bViewportMaximized = ViewportsPanel->IsSlotMaximized();
+	Out.MaximizedViewportIndex = ViewportsPanel->GetMaximizedSlotIndex();
+	for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
+	{
+		const auto& Camera = ViewportsPanel->GetEditorClient(Index)->GetCamera();
+		Out.ViewFov[Index] = Camera.Projection.FovDegrees;
+		Out.ViewOrthoWidth[Index] = Camera.Projection.OrthoWidth;
+		Out.ViewPreset[Index] = static_cast<int32>(ViewportsPanel->GetEditorClient(Index)->GetCameraPreset());
+		Out.ViewRenderMode[Index] = ViewportsPanel->GetEditorClient(Index)->GetViewRenderMode();
+		Out.ViewLocation[Index] = Camera.Location;
+		Out.ViewRotation[Index] = Camera.Rotation;
+		Out.bViewLocationSaved[Index] = true;
+		Out.bViewRotationSaved[Index] = true;
+	}
 }
 
 // 종료 시 뷰포트 클라이언트를 읽지 않도록 살아 있는 동안 저장용 설정을 갱신한다.
@@ -384,20 +402,20 @@ void FSettingsPanel::CaptureViewportSettings() { ReadViewportSettings(Settings);
 // 저장 프리셋·투영·표시·뷰 모드를 슬롯별로 복원하며 저장되지 않은 값은 초기값을 쓴다.
 void FSettingsPanel::ApplyViewportSettings()
 {
-    if (!ViewportsPanel) return;
-    ViewportsPanel->SetSplitRatio({Settings.ViewportSplitHorizontal, Settings.ViewportSplitVertical});
-    ViewportsPanel->SetMaximizedSlotIndex(Settings.MaximizedViewportIndex);
-    ViewportsPanel->SetSlotMaximized(Settings.bViewportMaximized);
-    for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
-    {
-        if (Settings.ViewPreset[Index] >= 0 && Settings.ViewPreset[Index] <= 7)
-            ViewportsPanel->GetEditorClient(Index)->ApplyCameraPreset(static_cast<EViewportCameraPreset>(Settings.ViewPreset[Index]), ViewportsPanel->GetViewport(Index)->GetOutputSize());
-        FEditorCameraState Camera = ViewportsPanel->GetEditorClient(Index)->GetCamera();
-        if (Settings.ViewFov[Index] > 0) Camera.Projection.FovDegrees = Settings.ViewFov[Index];
-        if (Settings.ViewOrthoWidth[Index] > 0) Camera.Projection.OrthoWidth = Settings.ViewOrthoWidth[Index];
-        if (Settings.bViewLocationSaved[Index]) Camera.Location = Settings.ViewLocation[Index];
-        if (Settings.bViewRotationSaved[Index]) Camera.Rotation = Settings.ViewRotation[Index];
-        ViewportsPanel->GetEditorClient(Index)->ApplyCameraProperties(Camera, false, ViewportsPanel->GetViewport(Index)->GetOutputSize());
-        ViewportsPanel->GetEditorClient(Index)->SetViewRenderMode(Settings.ViewRenderMode[Index]);
-    }
+	if (!ViewportsPanel) return;
+	ViewportsPanel->SetSplitRatio({ Settings.ViewportSplitHorizontal, Settings.ViewportSplitVertical });
+	ViewportsPanel->SetMaximizedSlotIndex(Settings.MaximizedViewportIndex);
+	ViewportsPanel->SetSlotMaximized(Settings.bViewportMaximized);
+	for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
+	{
+		if (Settings.ViewPreset[Index] >= 0 && Settings.ViewPreset[Index] <= 7)
+			ViewportsPanel->GetEditorClient(Index)->ApplyCameraPreset(static_cast<EViewportCameraPreset>(Settings.ViewPreset[Index]), ViewportsPanel->GetViewport(Index)->GetOutputSize());
+		FEditorCameraState Camera = ViewportsPanel->GetEditorClient(Index)->GetCamera();
+		if (Settings.ViewFov[Index] > 0) Camera.Projection.FovDegrees = Settings.ViewFov[Index];
+		if (Settings.ViewOrthoWidth[Index] > 0) Camera.Projection.OrthoWidth = Settings.ViewOrthoWidth[Index];
+		if (Settings.bViewLocationSaved[Index]) Camera.Location = Settings.ViewLocation[Index];
+		if (Settings.bViewRotationSaved[Index]) Camera.Rotation = Settings.ViewRotation[Index];
+		ViewportsPanel->GetEditorClient(Index)->ApplyCameraProperties(Camera, false, ViewportsPanel->GetViewport(Index)->GetOutputSize());
+		ViewportsPanel->GetEditorClient(Index)->SetViewRenderMode(Settings.ViewRenderMode[Index]);
+	}
 }

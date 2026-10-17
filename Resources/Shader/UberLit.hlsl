@@ -173,13 +173,14 @@ float ComputeDistanceAttenuation(float Distance, float Radius)
 
 void AccumulateLight(float3 Il, float3 N, float3 L, float3 V, float n, inout float3 DiffuseLight, inout float3 SpecularLight)
 {
+    // NdotL을 곱해 빛이 스치는 어두운 곳에서는 스펙큘러가 0으로 부드럽게 사라지게 함
     float NdotL = max(dot(N, L), 0.0f);
     DiffuseLight += Il * NdotL; // Lambert
+    
     if (NdotL > 0.0f)
     {
-#if LIGHTING_MODEL == LIGHTING_MODEL_PHONG
-        float3 R = 2.0f * dot(N, L) * N - L;
-        // ★ NdotL을 곱해 빛이 스치는 어두운 곳에서는 스펙큘러가 0으로 부드럽게 사라지게 함
+#if LIGHTING_MODEL == LIGHTING_MODEL_PHONG        
+        float3 R = 2.0f * NdotL * N - L;
         SpecularLight += SpecularTerm(Il, R, V, n) * NdotL;
 #elif LIGHTING_MODEL == LIGHTING_MODEL_BLINNPHONG
         float3 H = normalize(L + V);
@@ -223,8 +224,10 @@ void ComputeLighting(float3 N, float3 WorldPosition, float3 V, float n, out floa
         for (uint Index = 0; Index < (bOpaque ? NumPointLights : StructuredPointLightCount); ++Index)
         {
             FPointLightInfo Light;
-            if (bOpaque) Light = PointLights[Index];
-            else Light = StructuredPointLights[Index];
+            if (bOpaque)
+                Light = PointLights[Index];
+            else
+                Light = StructuredPointLights[Index];
             float3 ToLight = Light.Position - WorldPosition;
             float Distance = length(ToLight);
             float Radius = Light.AttenuationRadius;
@@ -245,8 +248,10 @@ void ComputeLighting(float3 N, float3 WorldPosition, float3 V, float n, out floa
         for (uint Index = 0; Index < (bOpaque ? NumSpotLights : StructuredSpotLightCount); ++Index)
         {
             FSpotLightInfo Light;
-            if (bOpaque) Light = SpotLights[Index];
-            else Light = StructuredSpotLights[Index];
+            if (bOpaque)
+                Light = SpotLights[Index];
+            else
+                Light = StructuredSpotLights[Index];
             float3 ToLight = Light.Position - WorldPosition;
             float Distance = length(ToLight);
             float Radius = Light.AttenuationRadius;
@@ -277,11 +282,13 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
     {
         float3 Il = DirectionalLight.Color;
         float3 L = -DirectionalLight.Direction;
+        
 #if USE_NORMAL_MAP
         float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
 #else
         float GeoFactor = 1.0f;
 #endif
+        
         float Shadow = GetDirectionalShadow(WorldPosition);
         AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }
@@ -293,12 +300,14 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
     const bool UseTileList = bOpaque != 0u && bUseTileList != 0u;
     uint TileIndex = 0;
     uint LightCount = StructuredPointLightCount + StructuredSpotLightCount;
+    
     if (UseTileList)
     {
         uint2 TileCoord = min(uint2(PixelPosition) / TileSize, uint2(TileCountX - 1u, TileCountY - 1u));
         TileIndex = TileCoord.y * TileCountX + TileCoord.x;
         LightCount = min(TileLightCount[TileIndex], MaxLightsPerTile);
     }
+    
     for (uint ListIndex = 0; ListIndex < LightCount; ++ListIndex)
     {
         uint LightIndex = UseTileList ? TileLightIndices[TileIndex * MaxLightsPerTile + ListIndex] : ListIndex;
@@ -308,10 +317,14 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             float3 ToLight = Light.Position - WorldPosition;
             float Distance = length(ToLight);
             float Radius = Light.AttenuationRadius;
+            
             if (Distance <= 0.0f || Distance >= Radius)
+            {
                 continue;
+            }
 
             float3 L = ToLight / Distance;
+            
 #if USE_NORMAL_MAP
             float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
             if (GeoFactor <= 0.0f)
@@ -323,39 +336,42 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
             float3 Il = Light.Color * DistanceAttenuation * GeoFactor;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
-
         }
         else
         {
             LightIndex -= StructuredPointLightCount;
-            if (LightIndex >= StructuredSpotLightCount) continue;
+            if (LightIndex >= StructuredSpotLightCount)
+                continue;
             FSpotLightInfo Light = StructuredSpotLights[LightIndex];
             float3 ToLight = Light.Position - WorldPosition;
             float Distance = length(ToLight);
             float Radius = Light.AttenuationRadius;
             if (Distance <= 0.0f || Distance >= Radius)
+            {
                 continue;
-
-            float3 L = ToLight / Distance;
+            }
+                float3 L = ToLight / Distance;
+            
 #if USE_NORMAL_MAP
-            float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
-            if (GeoFactor <= 0.0f)
-                continue;
+                float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
+                if (GeoFactor <= 0.0f)
+                    continue;
 #else
             float GeoFactor = 1.0f;
 #endif
 
-            float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float CosAngle = dot(-L, normalize(Light.Direction));
-            float SpotAttenuation = Light.CosInnerCone == Light.CosOuterCone
+                float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
+                float CosAngle = dot(-L, normalize(Light.Direction));
+                float SpotAttenuation = Light.CosInnerCone == Light.CosOuterCone
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
+            
+                float Shadow = LightIndex == 0u ? GetSpotShadow(WorldPosition) : 1.0f;
 
-            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor;
-            AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
-
+                float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
+                AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
+            }
         }
-    }
 }
 
 FPSInput mainVS(FVSInput Input)
@@ -367,18 +383,19 @@ FPSInput mainVS(FVSInput Input)
     Output.Position = mul(WorldPosition, ViewProjection);
     Output.WorldPosition = WorldPosition.xyz;
     Output.Normal = mul(Input.Normal, (float3x3) NormalMatrix);
+    Output.UV = Input.UV;
+    
 #if USE_NORMAL_MAP
     Output.Tangent = mul(Input.Tangent.xyz, (float3x3) World);
     Output.BitangentSign = Input.Tangent.w;
-#endif
-    Output.UV = Input.UV;
+#endif      
+    
 #if GOURAUD
     float3 N = normalize(Output.Normal);
     float3 V = normalize(CameraPosition - Output.WorldPosition);
-    // TODO
     ComputeLighting(N, Output.WorldPosition, V, Shininess, Output.DiffuseLight, Output.SpecularLight);
-    
 #endif
+    
     return Output;
 }
 
@@ -436,7 +453,7 @@ float4 mainPS(FPSInput Input) : SV_TARGET
         return float4(Color, 1.0f);
     }
     
-        float3 DiffuseLight;
+    float3 DiffuseLight;
     float3 SpecularLight;
 #if SHADING_MODEL == SHADING_MODEL_GOURAUD
     DiffuseLight = Input.DiffuseLight;
@@ -444,9 +461,7 @@ float4 mainPS(FPSInput Input) : SV_TARGET
 #else // Phong
     float3 N = normalize(WorldNormal);
     float3 V = normalize(CameraPosition - Input.WorldPosition);
-    
     ComputePixelLighting(N, Normal, Input.WorldPosition, V, Shininess, Input.Position.xy, DiffuseLight, SpecularLight);
-    
 #endif
     FinalColor = float4(Ka * AmbientLight.Color + Kd * DiffuseLight + Ks * SpecularLight, Alpha);
 #endif
