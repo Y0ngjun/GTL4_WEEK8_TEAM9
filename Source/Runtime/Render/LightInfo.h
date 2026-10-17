@@ -2,6 +2,11 @@
 
 #include "Math/Vector.h"
 
+enum class ELightType : uint8
+{
+	Ambient, Directional, Point, Spot,
+};
+
 // UberLit.hlsl의 MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS
 constexpr uint32 MaxPointLights = 4;
 constexpr uint32 MaxSpotLights = 4;

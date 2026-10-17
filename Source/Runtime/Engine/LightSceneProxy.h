@@ -6,11 +6,6 @@
 
 class FScene;
 
-enum class ELightType : uint8
-{
-	Ambient, Directional, Point, Spot,
-};
-
 class FLightSceneProxy
 {
 public:

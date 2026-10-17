@@ -6,6 +6,7 @@
 #include "Component/ParticleSubUVComponent.h"
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/World.h"
+#include "Engine/LightSceneProxy.h"
 #include "Core/Stats/LightweightStats.h"
 #include <algorithm>
 #include <cassert>
@@ -41,6 +42,7 @@ void FSceneRenderer::BeginFrame()
 {
     assert(!bFrameActive);
     bFrameActive = true;
+    ++FrameNumber;
     CapturedWorld = nullptr;
 }
 
@@ -60,6 +62,7 @@ void FSceneRenderer::PrepareView(UWorld& World, const FSceneView& View, FSceneRe
 
 void FSceneRenderer::EndFrame()
 {
+    for (auto& Slot : WorldShadowFrames) Slot.Data.ResetFrame();
     for (auto& Entry : PrimitiveById)
     {
         Entry.second.Primitive = nullptr;
@@ -186,4 +189,95 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
     SelectLODs(LODInputs, LODContext, SelectedLODs);
     for (uint32 I = 0; I < static_cast<uint32>(PendingStaticMeshes.Num()); ++I)
         PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
+}
+
+void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData)
+{
+    // 이전 CPU 요청/Queue만 비운다. GPU 배열을 해제하거나 재생성하는 처리가 아니다.
+    OutData.ResetFrame();
+    uint32 Next2DSlice = 0;
+    uint32 NextCube = 0;
+    const FLightSceneProxy* Directional = nullptr;
+    for (const FLightSceneProxy* Light : Scene.Lights)
+        if (Light->IsVisible() && Light->GetLightType() == ELightType::Directional)
+            Directional = Light;
+
+    // 기존 Directional 선택과 동일하게 마지막 visible 광원만 사용한다.
+    if (Directional && Directional->CastsShadow())
+        OutData.ShadowRequestsPerLight.Add({Directional, Next2DSlice++});
+
+    // BuildStructuredLight와 같은 visible 조건·Point/Spot 순서다.
+    // 요청에 포함된 Light만 출력 위치를 배정한다. 2D와 Cube 번호는 각각 0부터 시작한다.
+    for (ELightType Type : {ELightType::Point, ELightType::Spot})
+    {
+        for (const FLightSceneProxy* Light : Scene.Lights)
+        {
+            if (!Light->IsVisible() || Light->GetLightType() != Type) continue;
+            if (!Light->CastsShadow()) continue;
+            if (Type == ELightType::Point)
+            {
+                const FPointLightInfo& Info = static_cast<const FPointLightSceneProxy*>(Light)->GetInfo();
+                if (Info.AttenuationRadius <= 0.0f) continue;
+                OutData.ShadowRequestsPerLight.Add({Light, NextCube++});
+            }
+            else
+            {
+                const FSpotLightInfo& Info = static_cast<const FSpotLightSceneProxy*>(Light)->GetInfo();
+                if (Info.AttenuationRadius <= 0.0f) continue;
+                OutData.ShadowRequestsPerLight.Add({Light, Next2DSlice++});
+            }
+        }
+    }
+}
+
+void FSceneRenderer::BuildShadowCasterQueue(UWorld& World, FShadowDepthPassInfo& Pass)
+{
+    FRenderQueue& Queue = Pass.CasterPackets;
+    Queue.Reset();
+    const FFrustumPlanes& Frustum = Pass.Frustum;
+    World.GetScene().BVH.QueryCull(FrustumAllPlanesMask, 
+                                    [&Frustum](const FBox& Bounds, uint32& Mask)
+                                    {
+                                        return static_cast<EBVHCullResult>(ClassifyBoxInFrustum(Bounds, Frustum, Mask));
+                                    }, 
+                                    [&](FPrimitiveSceneProxy* Proxy)
+                                    {
+                                        if (!Proxy->IsVisible() || !Proxy->CastsShadow()) return;
+                                        UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(Proxy->GetComponent());
+                                        if (!Component || !Component->GetOwner() || Component->GetOwner()->GetWorld() != &World) return;
+                                        if (World.IsPlayInEditor() && Component->IsHiddenInGame()) return;
+                                        Component->SubmitToRenderQueue(Queue, 0);
+                                    }
+                                    );
+
+    // Section 패킷의 인덱스 범위는 유지하고, 불투명 Static Mesh 이외는 제외한다.
+    int32 Kept = 0;
+    for (int32 Index = 0; Index < Queue.Num(); ++Index)
+    {
+        const FRenderPacket& Packet = Queue[Index];
+        if (!Packet.Mesh || !Packet.Material || Packet.Material->ParamLayout != EMaterialParamLayout::StaticMesh || Packet.Material->BlendState != EBlendState::Opaque) continue;
+        if (Kept != Index) Queue[Kept] = Packet;
+        ++Kept;
+    }
+    Queue.SetNum(Kept);
+}
+const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint32 ResourceIndex)
+{
+    if (!bFrameActive || ResourceIndex >= MaxShadowResourceSlots) return nullptr;
+    FWorldShadowFrame& Slot = WorldShadowFrames[ResourceIndex];
+    if (Slot.PreparedFrame != FrameNumber)
+    {
+        BuildShadowRequests(World.GetScene(), Slot.Data);
+        // 각 Light 단계에서 유효한 행렬·Frustum을 만든 뒤 Pass를 추가하고 Caster를 수집한다.
+        // 아직 준비 경로가 없으므로 빈 Pass 목록을 유지한다. 미구현을 성공으로 처리하지 않는다.
+        Slot.PreparedFrame = FrameNumber;
+    }
+    return &Slot.Data;
+}
+
+void FSceneRenderer::ReleaseWorldShadows(uint32 ResourceIndex)
+{
+    if (ResourceIndex >= MaxShadowResourceSlots) return;
+    WorldShadowFrames[ResourceIndex].Data.ResetFrame();
+    WorldShadowFrames[ResourceIndex].PreparedFrame = 0;
 }
