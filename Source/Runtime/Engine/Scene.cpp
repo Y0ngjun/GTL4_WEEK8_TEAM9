@@ -288,8 +288,15 @@ void FScene::MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy)
 	RenderStateDirtyProxies.Add(Proxy);
 }
 
-void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix) const
+void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix, TArray<FLightShadowData>* Shadows ) const
 {
+	// 이번에 생성하는 조명 배열을 기준으로 연결을 다시 만든다.
+	if (Shadows)
+	{
+		for (FLightShadowData& Shadow : *Shadows)
+			Shadow.LightIndex = -1;
+	}
+
     OutPointLight.Reset();
     OutSpotLight.Reset();
     OutCullingLights.Reset();
@@ -305,12 +312,32 @@ void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray
                 OutPointLight.Add(Info);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius});
             }
-            else
-            {
-                const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);
-                OutSpotLight.Add(Spot->GetInfo());
-                OutCullingLights.Add({ViewMatrix.TransformPosition(Spot->GetCullingSphereCenter()), Spot->GetCullingSphereRadius()});
-            }
+			else
+			{
+				const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);
+
+				// Add하기 전 Num()이 이번 광원의 GPU 배열 번호다.
+				const int32 SpotIndex = OutSpotLight.Num();
+
+				OutSpotLight.Add(Spot->GetInfo());
+				OutCullingLights.Add({ 
+					ViewMatrix.TransformPosition(Spot->GetCullingSphereCenter()),
+					Spot->GetCullingSphereRadius()
+					});
+
+				if (Shadows)
+				{
+					for (FLightShadowData& Shadow : *Shadows)
+					{
+						if (Shadow.Type == EShadowProjection::Spot &&
+							Shadow.LightId == Proxy->GetComponent()->GetUUID())
+						{
+							Shadow.LightIndex = SpotIndex;
+							break;
+						}
+					}
+				}
+			}
         }
     }
 }

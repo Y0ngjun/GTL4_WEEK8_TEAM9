@@ -92,6 +92,11 @@ bool FRenderer::Init()
 	LightingCB = RenderCommand::CreateConstantBuffer(sizeof(FLightingConstants));
 	FLightingConstants LightingConstant{};
 	RenderCommand::UpdateBufferData(LightingCB.get(), &LightingConstant);
+	
+    DirectionalShadowCB = RenderCommand::CreateConstantBuffer(sizeof(FDirectionalShadowConstants));
+    const FDirectionalShadowConstants DirectionalShadowDefaults{};
+    RenderCommand::UpdateBufferData(DirectionalShadowCB.get(), &DirectionalShadowDefaults);
+    RenderCommand::BindConstantBuffer(5, DirectionalShadowCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
     TileShadingCB = RenderCommand::CreateConstantBuffer(sizeof(FTileLightShadingConstants));
     const FTileLightShadingConstants TileDefaults{};
@@ -167,7 +172,8 @@ void FRenderer::UploadPerObjectConstants()
 	for (uint32 Index = 0; Index < Count; ++Index)
 	{
 		FRenderPacket& P = RenderPackets[Index];
-		WriteObjectSlot(Dest, Index, GetPacketWorld(P), GetPacketNormalMatrix(P));
+		const bool bReceiveShadow = !P.Proxy || P.Proxy->IsReceivingShadows();
+		WriteObjectSlot(Dest, Index, GetPacketWorld(P), GetPacketNormalMatrix(P), bReceiveShadow);
 		P.Slot = Index;
 	}
 
@@ -307,12 +313,12 @@ void FRenderer::DrawStaticGroups(ESceneMeshPass Pass)
 		{
 			if (bUsePerObjectSlots && Item.Slot != InvalidObjectSlot)
 			{
-				RenderCommand::BindConstantBufferRange(2, PerObjectSlotCB.get(), Item.Slot * PerObjectSlotConstants, PerObjectSlotConstants, EShaderBindFlagBits::Vertex);
+				RenderCommand::BindConstantBufferRange(2, PerObjectSlotCB.get(), Item.Slot * PerObjectSlotConstants, PerObjectSlotConstants, EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 			}
 			else
 			{
-				RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
-				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld(), Item.Proxy->GetNormalMatrix());
+				RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld(), Item.Proxy->GetNormalMatrix(), Item.Proxy->IsReceivingShadows());
 			}
 			RenderCommand::DrawIndexed(Item.IndexCount, Item.StartIndex);
 		}
@@ -391,11 +397,11 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 			UpdateMaterialParams(RenderPacket);
 		if (bUsePerObjectSlots && RenderPacket.Slot != InvalidObjectSlot)
 		{
-			RenderCommand::BindConstantBufferRange(2, PerObjectSlotCB.get(), RenderPacket.Slot * PerObjectSlotConstants, PerObjectSlotConstants, EShaderBindFlagBits::Vertex);
+			RenderCommand::BindConstantBufferRange(2, PerObjectSlotCB.get(), RenderPacket.Slot * PerObjectSlotConstants, PerObjectSlotConstants, EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 		}
 		else
 		{
-			RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
+			RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 			UpdatePerObjectConstants(RenderPacket, ViewProjection);
 		}
 		RenderCommand::DrawIndexed(RenderPacket.IndexCount ? RenderPacket.IndexCount : RenderPacket.Mesh->GetIndexBuffer(RenderPacket.LODIndex)->GetIndexCount(), RenderPacket.StartIndex);
@@ -700,17 +706,81 @@ void FRenderer::UpdatePerObjectConstants(const FRenderPacket& RenderPacket, cons
 	// rp.Transform 과 Camera VP 행렬 곱
 	// 행렬곱의 결과 (MVP Matrix) Constant Buffer 업데이트 필요
 
-	UpdatePerObjectConstants(GetPacketWorld(RenderPacket), GetPacketNormalMatrix(RenderPacket));
+	// 패킷에서 알아낸 값을 행렬용 함수의 세 번째 인자로 전달한다.
+	const bool bReceiveShadow = !RenderPacket.Proxy || RenderPacket.Proxy->IsReceivingShadows();
+	UpdatePerObjectConstants(GetPacketWorld(RenderPacket), GetPacketNormalMatrix(RenderPacket), bReceiveShadow);
 }
 
-void FRenderer::UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix)
+void FRenderer::UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow)
 {
 	FPerObjectConstants Constants;
 
 	Constants.World = World;
 	Constants.NormalMatrix = NormalMatrix;
 
+	// 인자로 받은 설정을 실제 GPU 업로드 데이터에 기록한다.
+	Constants.ReceiveShadow = bReceiveShadow ? 1u : 0u;
+
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
+}
+
+const FTexture2D* FRenderer::FindShadowMap2D(uint32 LightId) const
+{
+	const auto* Found = ShadowMaps2D.Find(LightId);
+	return Found ? Found->get() : nullptr;
+}
+
+void FRenderer::SetDirectionalShadow(const FLightShadowData* Shadow)
+{
+	// 매 뷰마다 비활성 상태에서 시작한다.
+   // 이전 viewport나 이전 프레임의 그림자 상태가 남는 것을 방지한다.
+	FDirectionalShadowConstants Constants{};
+	ID3D11ShaderResourceView* ShadowSRV = nullptr;
+
+	// 현재는 Directional의 단일 2D Shadow Map을 사용한다.
+	if (Shadow &&
+		Shadow->Type == EShadowProjection::Directional &&
+		Shadow->Settings.bCastShadows &&
+		Shadow->MapDesc.Type == EShadowMapType::Texture2D &&
+		Shadow->MapDesc.SliceCount == 1 &&
+		Shadow->Views.Num() == 1 &&
+		Shadow->Views[0].TargetSlice == 0)
+	{
+		// 깊이 패스에서 이미 생성한 자원을 조회한다.
+		// 이 함수에서는 새 Shadow Map을 생성하지 않는다.
+		const FTexture2D* ShadowMap = FindShadowMap2D(Shadow->LightId);
+
+		// 해상도 변경 후 재생성에 실패했다면 이전 크기의 자원이
+		// 저장소에 남아 있을 수 있으므로 요청 크기도 확인한다.
+		if (ShadowMap && ShadowMap->GetRawPtr() && ShadowMap->GetDSV() && ShadowMap->GetSRV() &&
+			ShadowMap->GetWidth() > 0 && ShadowMap->GetHeight() > 0 &&
+			ShadowMap->GetWidth() == Shadow->MapDesc.Resolution &&
+			ShadowMap->GetHeight() == Shadow->MapDesc.Resolution)
+		{
+			// 깊이 생성에 사용한 것과 동일한 광원 행렬을 전달한다.
+			Constants.LightViewProjection = Shadow->Views[0].ViewProjection;
+
+			//// 이후 PCF에서 주변 texel로 이동할 때 사용할 UV 간격.
+			//Constants.TexelSize[0] = 1.0f / static_cast<float>(ShadowMap->GetWidth());
+			//Constants.TexelSize[1] = 1.0f / static_cast<float>(ShadowMap->GetHeight());
+
+			Constants.DepthBias = Shadow->Settings.DepthBias;
+			Constants.Enabled = 1;
+
+			ShadowSRV = ShadowMap->GetSRV();
+		}
+	}
+
+	// 유효한 그림자가 없어도 반드시 업로드한다.
+	// 그 경우 기본값인 Enabled = 0이 전달된다.
+	RenderCommand::UpdateBufferData( DirectionalShadowCB.get(), &Constants);
+
+	// VS: 광원 좌표 계산에 사용.
+	// PS: 활성화 여부, bias, texel 크기 등을 조회.
+	RenderCommand::BindConstantBuffer(5, DirectionalShadowCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+
+	// 유효한 그림자가 없으면 nullptr을 연결해 이전 SRV도 비운다.
+	RenderCommand::BindShaderResource( 12, ShadowSRV,EShaderBindFlagBits::Pixel);
 }
 
 FTexture2D* FRenderer::EnsureShadowMap2D(uint32 LightId, FShadowMapDesc Desc)

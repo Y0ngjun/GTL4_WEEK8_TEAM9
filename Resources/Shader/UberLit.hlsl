@@ -84,6 +84,7 @@ struct FPSInput
     float3 Normal : NORMAL;
     float2 UV : TEXCOORD0;
     float3 WorldPosition : TEXCOORD1;
+    float4 DirectionalShadowPosition : TEXCOORD4;
 #if USE_NORMAL_MAP
     float3 Tangent : TANGENT;
     int BitangentSign : BITANGENT_SIGN;
@@ -115,6 +116,9 @@ cbuffer PerObjectConstants : register(b2)
 {
     matrix World;
     matrix NormalMatrix; // World의 역전치
+    
+    uint ReceiveShadow;
+    uint3 PerObjectPadding;
 };
 
 cbuffer LightingConstants : register(b3)
@@ -140,10 +144,19 @@ cbuffer TileLightConstants : register(b4)
     uint bUseTileList;
 };
 
+cbuffer DirectionalShadowConstants : register(b5)
+{
+    matrix DirectionalShadowViewProjection; // CPU: LightViewProjection
+    float2 DirectionalShadowTexelSize; // CPU: TexelSize
+    float DirectionalShadowDepthBias; // CPU: DepthBias
+    uint DirectionalShadowEnabled; // CPU: Enabled
+};
+
 StructuredBuffer<FPointLightInfo> StructuredPointLights : register(t8);
 StructuredBuffer<FSpotLightInfo> StructuredSpotLights : register(t9);
 Buffer<uint> TileLightCount : register(t10);
 Buffer<uint> TileLightIndices : register(t11);
+Texture2D<float> DirectionalShadowMap : register(t12);
 
 Texture2D AlbedoTexture : register(t0);
 
@@ -266,14 +279,14 @@ void ComputeLighting(float3 N, float3 WorldPosition, float3 V, float n, out floa
 }
 
 
-void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition, out float3 DiffuseLight, out float3 SpecularLight)
+void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition,float DirectionalShadowVisibility, out float3 DiffuseLight, out float3 SpecularLight)
 {
     DiffuseLight = 0.0f;
     SpecularLight = 0.0f;
 
     // 화면 전체에 영향을 주는 Directional Light는 타일 목록에 넣지 않음
     {
-        float3 Il = DirectionalLight.Color;
+        float3 Il = DirectionalLight.Color * DirectionalShadowVisibility;
         float3 L = -DirectionalLight.Direction;
 #if USE_NORMAL_MAP
         float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
@@ -354,6 +367,32 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
         }
     }
 }
+float ComputeDirectionalShadow(float4 LightClipPosition)
+{
+    if (DirectionalShadowEnabled == 0u || ReceiveShadow == 0u)
+        return 1.0f;
+
+    float3 LightNDC = LightClipPosition.xyz / LightClipPosition.w;
+    float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+
+    // Shadow Map이 담당하는 영역 밖은 그림자를 적용하지 않는다.
+    if (any(UV < 0.0f) || any(UV > 1.0f) || LightNDC.z < 0.0f || LightNDC.z > 1.0f)
+    {
+        return 1.0f;
+    }
+
+    uint Width, Height;
+    DirectionalShadowMap.GetDimensions(Width, Height);
+
+    // UV가 1이면 인덱스가 크기와 같아지므로 마지막 texel로 제한한다.
+    uint2 Texel = min( uint2(UV * float2(Width, Height)), uint2(Width - 1u, Height - 1u));
+
+    float MapDepth = DirectionalShadowMap.Load(int3(Texel, 0));
+
+    return LightNDC.z - DirectionalShadowDepthBias <= MapDepth
+        ? 1.0f : 0.0f;
+}
+
 
 FPSInput mainVS(FVSInput Input)
 {
@@ -364,6 +403,8 @@ FPSInput mainVS(FVSInput Input)
     Output.Position = mul(WorldPosition, ViewProjection);
     Output.WorldPosition = WorldPosition.xyz;
     Output.Normal = mul(Input.Normal, (float3x3) NormalMatrix);
+    Output.DirectionalShadowPosition = mul(WorldPosition, DirectionalShadowViewProjection);
+    
 #if USE_NORMAL_MAP
     Output.Tangent = mul(Input.Tangent.xyz, (float3x3) World);
     Output.BitangentSign = Input.Tangent.w;
@@ -441,8 +482,9 @@ float4 mainPS(FPSInput Input) : SV_TARGET
 #else // Phong
     float3 N = normalize(WorldNormal);
     float3 V = normalize(CameraPosition - Input.WorldPosition);
-    
-    ComputePixelLighting(N, Normal, Input.WorldPosition, V, Shininess, Input.Position.xy, DiffuseLight, SpecularLight);
+    float DirectionalShadowVisibility = ComputeDirectionalShadow(Input.DirectionalShadowPosition);
+    ComputePixelLighting(N, Normal, Input.WorldPosition, V, Shininess, Input.Position.xy, DirectionalShadowVisibility
+    ,DiffuseLight, SpecularLight);
     
 #endif
     FinalColor = float4(Ka * AmbientLight.Color + Kd * DiffuseLight + Ks * SpecularLight, Alpha);

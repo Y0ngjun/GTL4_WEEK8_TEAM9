@@ -65,6 +65,8 @@ void FSceneRenderer::PrepareView(UWorld& World, const FSceneView& View, FSceneRe
 		CollectShadowLights(World.GetScene(), Data);
 		// Directional Light 그림자만 시점별로 그릴 수 있도록 SceneView를 만듬
 		BuildDirectionalLightShadowView(World.GetScene(), View, Data);
+		BuildSpotLightShadowView(World.GetScene(), View, Data);
+		//BuildPointLightShadowView(World.GetScene(), View, Data);
 
 		for (FLightShadowData& Shadow : Data.LightShadows)
 			for (FShadowView& ShadowView : Shadow.Views)
@@ -364,6 +366,77 @@ void FSceneRenderer::BuildDirectionalLightShadowView(const FScene& Scene, FScene
     }
 
 
+}
+
+void FSceneRenderer::BuildSpotLightShadowView(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data)
+{
+    for (FLightShadowData& Shadow : Data.LightShadows)
+    {
+        if (Shadow.Type != EShadowProjection::Spot)
+            continue;
+
+        for (const FLightSceneProxy* Proxy : Scene.Lights)
+        {
+            if (!Proxy->IsVisible() ||
+                Proxy->GetLightType() != ELightType::Spot ||
+                Proxy->GetComponent()->GetUUID() != Shadow.LightId)
+            {
+                continue;
+            }
+
+            const auto* Spot = static_cast<const FSpotLightSceneProxy*>(Proxy);
+            const FSpotLightInfo& Info = Spot->GetInfo();
+
+            // 원근 투영의 near는 0보다 커야 한다.
+            constexpr float NearClip = 0.01f;
+            if (Info.AttenuationRadius <= NearClip ||
+                Info.Direction.SizeSquared() < 1e-8f)
+            {
+                continue;
+            }
+
+            // CosOuterCone에는 바깥 반각의 cos 값이 저장되어 있다.
+            const float HalfAngle = std::acos(std::clamp(Info.CosOuterCone, -1.0f, 1.0f));
+
+            if (HalfAngle <= 0.0f || HalfAngle >= PI * 0.5f)
+                continue;
+
+            const FVector Forward = Info.Direction.GetSafeNormal();
+
+            // Forward와 평행하지 않은 보조 Up을 선택한다.
+            const FVector UpGuide = std::fabs(Forward.Z) > 0.99f
+                ? FVector(0, 1, 0)
+                : FVector(0, 0, 1);
+
+            const FVector Right = UpGuide.Cross(Forward).GetSafeNormal();
+            const FVector Up = Forward.Cross(Right).GetSafeNormal();
+
+            FMatrix Rotation = FMatrix::Identity;
+            Rotation.SetAxis(0, Forward);
+            Rotation.SetAxis(1, Right);
+            Rotation.SetAxis(2, Up);
+
+            // Directional과 달리 광원 자신의 위치에서 관측한다.
+            const FMatrix LightView = FMatrix::MakeTranslation(-Info.Position) * Rotation.GetTransposed();
+
+            FCameraProjection Projection;
+            Projection.Mode = EProjectionMode::Perspective;
+            Projection.FovDegrees = FMath::RadiansToDegrees(HalfAngle) * 2.0f;
+            Projection.NearClip = NearClip;
+            Projection.FarClip = Info.AttenuationRadius;
+
+            FShadowView ShadowView;
+            ShadowView.ViewProjection = LightView * Projection.GetMatrix(1.0f);
+            ShadowView.Frustum = ExtractFrustumPlanes(ShadowView.ViewProjection);
+
+            // 실제 배열 slice는 렌더링 준비 시 배정한다.
+            ShadowView.TargetSlice = 0;
+
+            Shadow.Views.Reset();
+            Shadow.Views.Add(std::move(ShadowView));
+            break;
+        }
+    }
 }
 
 // TODO : 캡쳐한 전체 RenderObjects를 순회하지만, 나중에 BVH로 바꾸는게 좋을듯

@@ -60,7 +60,13 @@ struct FShadowView
 // 하나의 광원에 대한 그림자들을 렌더링하기 위한 데이터묶음
 struct FLightShadowData
 {
+
 	uint32 LightId = 0;
+
+	// 이번 뷰의 SpotLights 배열에서 이 광원이 위치한 번호.
+	// GPU에 전달하지 않는 CPU 준비 정보다.
+	int32 LightIndex = -1;
+
 	EShadowProjection Type = EShadowProjection::Directional;
 	FShadowMapDesc MapDesc;
 	FShadowSettings Settings;

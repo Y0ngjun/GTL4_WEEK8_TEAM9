@@ -6,6 +6,9 @@
 #include "Engine/World.h"
 
 struct FTransform;
+class FRenderer;
+class FDepthViewRenderer;
+class ULightComponent;
 
 using DetailsSelectionCallback = std::function<void(UActorComponent*)>;
 using DetailsDeleteComponentCallback = std::function<void(UActorComponent*)>;
@@ -37,11 +40,22 @@ public:
 
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
 
+	// 소유권은 Engine에 유지하고 자원 조회와 미리보기 PS 바인딩에만 사용한다.
+	void SetShadowPreviewSources(FRenderer* InRenderer, FDepthViewRenderer* InDepthViewRenderer)
+	{
+		PreviewRenderer = InRenderer;
+		DepthPreviewRenderer = InDepthViewRenderer;
+	}
+
 	ImFont* GetCustomFont() { return CustomFont; }
 
 private:
 	void DrawSceneComponentNode(USceneComponent* Component, USceneComponent* Root, UActorComponent*& OutSelectedComponent);
 	void TryReparent(USceneComponent* DroppedComponent, USceneComponent* DragComponent);
+	void DrawShadowDepthPreview(ULightComponent* Light);
+
+	FRenderer* PreviewRenderer = nullptr;
+	FDepthViewRenderer* DepthPreviewRenderer = nullptr;
 
 	UWorld* World = nullptr;
 	ImFont* CustomFont = nullptr;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Renderer.h"
 #include "RenderPacket.h"
 #include "Texture2D.h"
 #include "Text/Font.h"
@@ -18,7 +19,15 @@ struct FPerObjectConstants
 {
 	FMatrix World;
 	FMatrix NormalMatrix;
+
+	// 물체별 그림자 수신 여부. HLSL uint와 크기를 맞춘다.
+	uint32 ReceiveShadow = 1;
+
+	// 상수 버퍼의 16바이트 단위 배치를 맞춘다.
+	uint32 Padding[3] = {};
+
 };
+static_assert(sizeof(FPerObjectConstants) == 144);
 static_assert(sizeof(FPerObjectConstants) <= ObjectSlotBytes);
 
 struct FViewConstants
@@ -27,15 +36,36 @@ struct FViewConstants
 	FVector CameraPosition;
 	float Padding = 0.0f;
 };
+
+struct FDirectionalShadowConstants
+{
+	FMatrix LightViewProjection = FMatrix::Identity;
+	// Shadow Map의 한 texel이 차지하는 UV 크기.
+
+	// 현재 깊이를 저장된 깊이와 비교할 때 사용할 Bias
+	float TexelSize[2] = { 0.0f, 0.0f };
+
+	// Shadow Map의 깊이와 비교할 때 사용할 Bias
+	float DepthBias = 0.0f;
+
+	// 0, 그림자 조회 생략, 1: 조회 활성화
+	uint32 Enabled = 0;
+};
+
 static_assert(sizeof(FViewConstants) == 80, "HLSL b0 레이아웃(matrix + float3 + float)과 같아야 한다");
+static_assert(sizeof(FDirectionalShadowConstants) == 80, "HLSL b1 레이아웃(matrix + float2 + float + uint)과 같아야 한다");
 
 inline FMatrix MakeNormalMatrix(const FMatrix& World) { return World.Inverse().GetTransposed(); }
 
-inline void WriteObjectSlot(uint8* SlotBase, uint32 Slot, const FMatrix& World, const FMatrix& NormalMatrix)
+inline void WriteObjectSlot(uint8* SlotBase, uint32 Slot, const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = true)
 {
+	FPerObjectConstants Constants{};
+	Constants.World = World;
+	Constants.NormalMatrix = NormalMatrix;
+	Constants.ReceiveShadow = bReceiveShadow ? 1u : 0u;
+
 	uint8* Dest = SlotBase + static_cast<size_t>(Slot) * ObjectSlotBytes;
-	std::memcpy(Dest + offsetof(FPerObjectConstants, World), &World, sizeof(FMatrix));
-	std::memcpy(Dest + offsetof(FPerObjectConstants, NormalMatrix), &NormalMatrix, sizeof(FMatrix));
+	std::memcpy(Dest, &Constants, sizeof(Constants));
 }
 
 struct FSortEntry
@@ -81,9 +111,11 @@ public:
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
-
 	// 광원 하나의 Shadow Map에 caster들의 깊이를 기록한다.
 	void RenderShadowDepth(const FLightShadowData& Shadow);
+	// 생성된 Shadow Map을 빌려 조회한다. 조회 중에는 자원을 생성하지 않는다.
+	const FTexture2D* FindShadowMap2D(uint32 LightId) const;
+	void SetDirectionalShadow(const FLightShadowData* Shadow);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -122,6 +154,7 @@ private:
 	TUniquePtr<FConstantBuffer> ViewCB;
 	TUniquePtr<FConstantBuffer> LightingCB;
 	TUniquePtr<FConstantBuffer> TileShadingCB;
+	TUniquePtr<FConstantBuffer> DirectionalShadowCB;
 	FShaderProgram* DepthShader = nullptr;
 
 	// 모든 패킷의 World 행렬을 256바이트 칸에 한 번에 올린 버퍼. D3D11.1 오프셋 바인딩을 못 쓰면 PerObjectCB로 돌아간다.
@@ -145,7 +178,7 @@ private:
 
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color, const FRenderQueue* OverrideQueue = nullptr);
 	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
-	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
+	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = true);
 	FTexture2D* EnsureShadowMap2D(uint32 LightId, FShadowMapDesc ShadowMapDesc);
 	
 	TMap<uint32, TUniquePtr<FTexture2D>> ShadowMaps2D;

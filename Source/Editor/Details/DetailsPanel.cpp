@@ -10,9 +10,12 @@
 #include "Component/ParticleSubUVComponent.h"
 #include "Component/RotatingMovementComponent.h"
 #include "Component/ProjectileMovementComponent.h"
+#include "Component/LightComponent.h"
 #include "Asset/AssetManager.h"
 #include "Render/Material.h"
 #include "Render/Texture2D.h"
+#include "Render/Renderer.h"
+#include "Render/DepthViewRenderer.h"
 #include "Text/Font.h"
 #include "UObject/UObjectIterator.h"
 #include "GameFramework/Actor.h"
@@ -1005,6 +1008,10 @@ void FDetailsPanel::OnRender()
 			{
 				DrawMaterialSlots(MeshComponent);
 			}
+			if (ULightComponent* Light = Cast<ULightComponent>(TargetComponent))
+			{
+				DrawShadowDepthPreview(Light);
+			}
 			ImGui::PopID();
 
 			if (PendingDeleteComponent)
@@ -1021,6 +1028,57 @@ void FDetailsPanel::OnRender()
 	ImGui::End();
 }
 
+
+void FDetailsPanel::DrawShadowDepthPreview(ULightComponent* Light)
+{
+	if (!Light || !PreviewRenderer || !DepthPreviewRenderer)
+		return;
+
+	if (!ImGui::CollapsingHeader("Shadow Depth Map", ImGuiTreeNodeFlags_DefaultOpen))
+		return;
+
+	if (!Light->IsCastingShadows())
+	{
+		ImGui::TextDisabled("Shadows disabled.");
+		return;
+	}
+
+	if (!DepthPreviewRenderer->IsReady())
+	{
+		ImGui::TextDisabled("Depth preview unavailable.");
+		return;
+	}
+
+	// 프레임의 CPU 데이터는 이미 정리되었으므로 광원 ID로 GPU 자원을 조회한다.
+	const FTexture2D* ShadowMap = PreviewRenderer->FindShadowMap2D(Light->GetUUID());
+	if (!ShadowMap || !ShadowMap->GetSRV())
+	{
+		ImGui::TextDisabled("No shadow map available. Render a Lit viewport with shadows enabled.");
+		return;
+	}
+
+	// 실제 자원 크기를 표시하므로 해상도 변경 후 재생성 결과를 확인할 수 있다.
+	ImGui::Text("Resolution: %u x %u", ShadowMap->GetWidth(), ShadowMap->GetHeight());
+	ImGui::TextDisabled("Last generated map | Near: dark / Far: light");
+
+	const float Size = std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, 320.0f);
+	ImDrawList* DrawList = ImGui::GetWindowDrawList();
+
+	// Image()는 draw 명령을 예약한다. 실제 draw 직전에 PS와 모드를 설정한다.
+	DrawList->AddCallback(
+		[](const ImDrawList*, const ImDrawCmd* Command)
+		{
+			auto* DepthRenderer = static_cast<FDepthViewRenderer*>(Command->UserCallbackData);
+			DepthRenderer->BindShadowPreview();
+		},
+		DepthPreviewRenderer);
+
+	// ImGui가 깊이 SRV를 PS의 t0에 연결하고 사각형을 렌더링한다.
+	ImGui::Image((ImTextureID)ShadowMap->GetSRV(), ImVec2(Size, Size));
+
+	// 다음 UI가 깊이 시각화 PS를 사용하지 않도록 ImGui 상태를 복원한다.
+	DrawList->AddCallback(ImGui::GetPlatformIO().DrawCallback_ResetRenderState, nullptr);
+}
 
 void FDetailsPanel::SelectComponent(UActorComponent* Component)
 {

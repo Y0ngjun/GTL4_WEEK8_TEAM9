@@ -121,6 +121,7 @@ bool UEditorEngine::Init()
 
 	// 필요한 Panel들 추가후 raw pointer 반환(소유권 = EditorUI)
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
+	DetailsPanel->SetShadowPreviewSources(Renderer, DepthViewRenderer.get());
 	EditorControlsPanel = EditorUI->AddEditorPanel<FEditorControlsPanel>();
 	ViewportsPanel = EditorUI->AddEditorPanel<FViewportsPanel>();
 	ViewportsPanel->SetHostWindow(MainWindow);
@@ -881,6 +882,9 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
+	// Unlit이거나 해당 광원의 그림자가 꺼져 있으면 nullptr로 유지된다.
+	const FLightShadowData* DirectionalShadow = nullptr;
+
 	// 그림자 Pass
 	// Lit 모드에서 메시를 그리는 경우, 광원별 Shadow Map을 먼저 생성한다.
 	if (View.RenderMode.ViewMode == EViewMode::Lit &&
@@ -889,8 +893,19 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 		for (const FLightShadowData& Shadow : Data.LightShadows)
 		{
 			Renderer->RenderShadowDepth(Shadow);
+
+			// CollectShadowLights()가 선택한 Directional은 최대 하나다.
+			// 조명 계산에 사용한 광원과 동일한 그림자 데이터를 선택한다.
+			if (Shadow.Type == EShadowProjection::Directional)
+			{
+				DirectionalShadow = &Shadow;
+			}
 		}
 	}
+	
+	// Lit 조건 밖에서 항상 호출한다.
+	// Unlit으로 전환한 경우에도 기존 그림자 상태를 비활성화해야 한다.
+	Renderer->SetDirectionalShadow(DirectionalShadow);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
