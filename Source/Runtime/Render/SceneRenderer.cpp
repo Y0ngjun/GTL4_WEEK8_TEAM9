@@ -64,7 +64,7 @@ void FSceneRenderer::PrepareView(UWorld& World, const FSceneView& View, FSceneRe
         // 먼저 Data.LightShadows에 광원별 그림자 데이터를 만듬
 		CollectShadowLights(World.GetScene(), Data);
 		// Directional Light 그림자만 시점별로 그릴 수 있도록 SceneView를 만듬
-		BuildDirectionalLightShadows(World.GetScene(), View, Data);
+		BuildDirectionalLightShadowView(World.GetScene(), View, Data);
 
 		for (FLightShadowData& Shadow : Data.LightShadows)
 			for (FShadowView& ShadowView : Shadow.Views)
@@ -201,7 +201,6 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
     for (uint32 I = 0; I < static_cast<uint32>(PendingStaticMeshes.Num()); ++I)
         PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
 }
-
 // 그림자를 그리는 광원을 수집
 void FSceneRenderer::CollectShadowLights(const FScene& Scene, FSceneRenderData& Data)
 {
@@ -272,7 +271,7 @@ void FSceneRenderer::CollectShadowLights(const FScene& Scene, FSceneRenderData& 
     }
 }
 
-void FSceneRenderer::BuildDirectionalLightShadows(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data)
+void FSceneRenderer::BuildDirectionalLightShadowView(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data)
 {
 	// 그림자에 관련된 static Mesh들의 월드 AABB를 합친 SceneBounds를 계산
     FBox SceneBounds{};
@@ -340,6 +339,7 @@ void FSceneRenderer::BuildDirectionalLightShadows(const FScene& Scene, FSceneVie
 					LightRotation.SetAxis(2,LightUp);
                     const FMatrix LightView =  FMatrix::MakeTranslation(-LightEye) * LightRotation.GetTransposed();
 
+                    // Light Projection 행렬 계산
 					FCameraProjection ShadowProjection;
 					ShadowProjection.Mode = EProjectionMode::Orthographic;
 					ShadowProjection.OrthoWidth = SceneRadius * 2.0f;

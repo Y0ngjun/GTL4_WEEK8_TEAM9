@@ -201,6 +201,18 @@ void FRenderer::RenderDepthPrepass(const FMatrix& ViewProjection)
     DrawPackets(0, FirstTranslucentIndex, ViewProjection, ESceneMeshPass::DepthPrepass);
 }
 
+
+// light space 행렬을 ViewCB에 전달
+void FRenderer::RenderShadowDepth(const FMatrix& ViewProjection, const FRenderQueue* OverrideQueue)
+{
+	if (!OverrideQueue) return;
+	FViewConstants Constants{};
+	Constants.ViewProjection = ViewProjection;
+	RenderCommand::UpdateBufferData(ViewCB.get(), &Constants);
+	DrawPackets(0, OverrideQueue->Num(), ViewProjection, ESceneMeshPass::DepthPrepass, OverrideQueue);
+}
+
+
 // RenderOpaque가 남긴 반투명 패킷을 먼 것부터 그린다.
 void FRenderer::RenderTranslucent(const FMatrix& ViewProjection)
 {
@@ -298,7 +310,7 @@ void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewPro
 }
 
 // 정렬된 패킷 중 [Begin, End) 범위를 View 행렬과 Section 범위로 그린다.
-void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass)
+void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass, const FRenderQueue* OverrideQueue = nullptr)
 {
 	SCOPE_CYCLE_COUNTER(STAT_DrawRenderPackets);
 
@@ -309,13 +321,10 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 	RenderCommand::BindConstantBuffer(0, ViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(3, LightingCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
-
 	for (uint32 k = Begin; k < End; ++k)          // k = 정렬된 위치
 	{
-		const uint32 PacketIndex = SortEntries[k].PacketIndex;
-		const FRenderPacket& RenderPacket = RenderPackets[PacketIndex];
+		const FRenderPacket& RenderPacket = OverrideQueue ? (*OverrideQueue)[k] : RenderPackets[SortEntries[k].PacketIndex];
 		if (Pass == ESceneMeshPass::DepthPrepass && !UsesDepthPrepass(RenderPacket.Material)) continue;
-		//if (RenderPacket.Mesh == nullptr || RenderPacket.Material == nullptr) continue;
 		if (RenderPacket.Mesh != LastMesh || RenderPacket.LODIndex != LastLODIndex) {
 			RenderCommand::BindMesh(RenderPacket.Mesh, RenderPacket.LODIndex);
 		}
@@ -333,7 +342,6 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 			RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
 			UpdatePerObjectConstants(RenderPacket, ViewProjection);
 		}
-
 		RenderCommand::DrawIndexed(RenderPacket.IndexCount ? RenderPacket.IndexCount : RenderPacket.Mesh->GetIndexBuffer(RenderPacket.LODIndex)->GetIndexCount(), RenderPacket.StartIndex);
 		LastMaterial = RenderPacket.Material;
 		LastMesh = RenderPacket.Mesh;

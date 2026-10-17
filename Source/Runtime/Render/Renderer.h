@@ -80,6 +80,7 @@ public:
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
+	void RenderShadowDepth(const FMatrix& ViewProjection,  const FRenderQueue* OverrideQueue);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -136,7 +137,7 @@ private:
 	FLocalLight LocalLight;
 	FTileLightCulling TileLightCulling;
 
-	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color);
+	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color, const FRenderQueue* OverrideQueue);
 	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
 
