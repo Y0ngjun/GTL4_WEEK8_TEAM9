@@ -117,7 +117,10 @@ bool UPrimitiveComponent::MoveComponent(const FVector& Delta, const FRotator& Ne
 void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)
 {
 	Super::PostEditChangeProperty(Property);
-	MarkRenderStateDirty();
+	if (Property.Name == "bCastShadow" || Property.Name == "bVisible")
+	{
+		MarkRenderStateDirty();
+	}
 }
 
 bool UPrimitiveComponent::TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult)
