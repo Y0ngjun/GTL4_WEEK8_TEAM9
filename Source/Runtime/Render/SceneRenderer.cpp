@@ -7,6 +7,7 @@
 #include "Engine/PrimitiveSceneProxy.h"
 #include "Engine/World.h"
 #include "Engine/LightSceneProxy.h"
+#include "Camera/CameraProjection.h"
 #include "Core/Stats/LightweightStats.h"
 #include <algorithm>
 #include <cassert>
@@ -268,8 +269,10 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     if (Slot.PreparedFrame != FrameNumber)
     {
         BuildShadowRequests(World.GetScene(), Slot.Data);
-        // 각 Light 단계에서 유효한 행렬·Frustum을 만든 뒤 Pass를 추가하고 Caster를 수집한다.
-        // 아직 준비 경로가 없으므로 빈 Pass 목록을 유지한다. 미구현을 성공으로 처리하지 않는다.
+        for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
+            if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Spot)
+                PrepareSpotShadow(World, Index, Slot.Data);
+        // Directional/Point는 각 구현 단계까지 ShadowIndex를 무효로 유지한다.
         Slot.PreparedFrame = FrameNumber;
     }
     return &Slot.Data;
@@ -280,4 +283,48 @@ void FSceneRenderer::ReleaseWorldShadows(uint32 ResourceIndex)
     if (ResourceIndex >= MaxShadowResourceSlots) return;
     WorldShadowFrames[ResourceIndex].Data.ResetFrame();
     WorldShadowFrames[ResourceIndex].PreparedFrame = 0;
+}
+
+void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame)
+{
+    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
+    const auto* Light = static_cast<const FSpotLightSceneProxy*>(Request.Light);
+    const FSpotLightInfo& Spot = Light->GetInfo();
+    const FVector Forward = Spot.Direction.GetSafeNormal();
+    // Perspective에 유효한 전방 방향과 0 < 반각 < 90도가 필요하다.
+    if (Forward.Dot(Forward) == 0.0f || Spot.CosOuterCone <= 0.0f || Spot.CosOuterCone >= 1.0f) return;
+    const FVector UpGuide = std::abs(Forward.Z) > 0.99f ? FVector(0, 1, 0) : FVector(0, 0, 1);
+    const FVector Right = FVector::Cross(UpGuide, Forward).GetSafeNormal();
+    const FVector Up = FVector::Cross(Forward, Right);
+    FMatrix Rotation = FMatrix::Identity;
+    Rotation.SetAxis(0, Forward);
+    Rotation.SetAxis(1, Right);
+    Rotation.SetAxis(2, Up);
+    const FMatrix View = FMatrix::MakeTranslation(Spot.Position * -1.0f) * Rotation.GetTransposed();
+    FCameraProjection Projection;
+    Projection.FovDegrees = FMath::RadiansToDegrees(2.0f * std::acos(Spot.CosOuterCone));
+    // 월드 거리 0.01을 기본으로 하되 작은 Light도 Far보다 작은 Near를 유지한다.
+    constexpr float DefaultShadowNear = 0.01f;
+    Projection.NearClip = std::min(DefaultShadowNear, Spot.AttenuationRadius * 0.01f);
+    Projection.FarClip = Spot.AttenuationRadius;
+
+    FShadowDepthPassInfo Pass;
+    Pass.RequestIndex = RequestIndex;
+    Pass.ArraySlice = Request.ShadowMapIndex;
+    Pass.ViewProjection = View * Projection.GetMatrix(1.0f);
+    Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
+    BuildShadowCasterQueue(World, Pass);
+
+    FShadowInfo Info;
+    Info.ViewProjection = Pass.ViewProjection;
+    Info.LightPosition = Spot.Position;
+    Info.InvRadius = 1.0f / Spot.AttenuationRadius;
+    Info.ShadowMapIndex = Request.ShadowMapIndex;
+    Info.LightType = static_cast<uint32>(ELightType::Spot);
+    Info.Bias = Light->GetShadowBias() * Info.InvRadius;
+    Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
+    Info.MaxSlope = Light->GetShadowMaxSlope();
+    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
+    Frame.ShadowInfos.Add(Info);
+    Frame.ShadowDepthPassInfos.Add(std::move(Pass));
 }

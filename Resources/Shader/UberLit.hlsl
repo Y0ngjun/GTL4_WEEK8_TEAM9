@@ -170,7 +170,7 @@ TextureCubeArray<float> ShadowDepthCube : register(t14);
 SamplerState ShadowSampler : register(s1);
 
 // 각 Light의 조회 구현에서 이 조건을 통과한 경우에만 ShadowInfos를 읽는다.
-// 아직 조회 함수는 연결하지 않는다. 미구현 Light는 CPU에서 InvalidShadowIndex를 유지한다.
+// 미구현 Light는 CPU에서 InvalidShadowIndex를 유지한다.
 bool CanSampleShadow(uint ShadowIndex, uint ReceiveShadow)
 {
 #if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
@@ -178,6 +178,27 @@ bool CanSampleShadow(uint ShadowIndex, uint ReceiveShadow)
 #else
     return false;
 #endif
+}
+
+// Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.
+float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
+{
+    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
+    FShadowInfo Info = ShadowInfos[ShadowIndex];
+    float4 Clip = mul(float4(WorldPosition, 1.0f), Info.ViewProjection);
+    if (Clip.w <= 0.0f) return 1.0f;
+    float3 Ndc = Clip.xyz / Clip.w;
+    float3 ToLight = Info.LightPosition - WorldPosition;
+    float Distance = length(ToLight);
+    float ReceiverDepth = Distance * Info.InvRadius;
+    // 범위는 Bias 적용 전에 검사한다. Near 밖/반경 밖의 점은 그림자를 조회하지 않는다.
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f || Distance <= 0.0f) return 1.0f;
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
+    float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
+    float CosTheta = saturate(dot(normalize(GeoNormal), ToLight / Distance));
+    float TanTheta = sqrt(max(1.0f - CosTheta * CosTheta, 0.0f)) / max(CosTheta, 0.0001f);
+    float Bias = Info.Bias + Info.SlopeBias * min(TanTheta, Info.MaxSlope);
+    return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
 Texture2D AlbedoTexture : register(t0);
@@ -301,7 +322,7 @@ void ComputeLighting(float3 N, float3 WorldPosition, float3 V, float n, out floa
 }
 
 
-void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition, out float3 DiffuseLight, out float3 SpecularLight)
+void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition, uint ReceiveShadow, out float3 DiffuseLight, out float3 SpecularLight)
 {
     DiffuseLight = 0.0f;
     SpecularLight = 0.0f;
@@ -383,7 +404,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
 
-            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor;
+            float Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
         }
@@ -478,7 +500,7 @@ float4 mainPS(FPSInput Input) : SV_TARGET
     float3 N = normalize(WorldNormal);
     float3 V = normalize(CameraPosition - Input.WorldPosition);
     
-    ComputePixelLighting(N, Normal, Input.WorldPosition, V, Shininess, Input.Position.xy, DiffuseLight, SpecularLight);
+    ComputePixelLighting(N, Normal, Input.WorldPosition, V, Shininess, Input.Position.xy, Input.ReceiveShadow, DiffuseLight, SpecularLight);
     
 #endif
     FinalColor = float4(Ka * AmbientLight.Color + Kd * DiffuseLight + Ks * SpecularLight, Alpha);
