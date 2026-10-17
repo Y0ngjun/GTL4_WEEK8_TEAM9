@@ -3,6 +3,14 @@
 #include "Engine/LightSceneProxy.h"
 #include "Render/LineBatcher.h"
 
+UDirectionalLightComponent::UDirectionalLightComponent()
+{
+    // 월드 거리 단위의 초기값. 실제 장면 크기와 해상도에 맞춘 품질 조정은 별도다.
+    ShadowBias = 0.001f;
+    ShadowSlopeBias = 0.01f;
+    ShadowMaxSlope = 2.0f;
+}
+
 FDirectionalLightInfo UDirectionalLightComponent::GetDirectionalLightInfo() const
 {
 	FDirectionalLightInfo Info;

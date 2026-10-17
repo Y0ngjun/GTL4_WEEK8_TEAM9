@@ -180,6 +180,27 @@ bool CanSampleShadow(uint ShadowIndex, uint ReceiveShadow)
 #endif
 }
 
+float ComputeShadowBias(FShadowInfo Info, float3 GeoNormal, float3 ToLightDirection)
+{
+    float CosTheta = saturate(dot(normalize(GeoNormal), ToLightDirection));
+    float TanTheta = sqrt(max(1.0f - CosTheta * CosTheta, 0.0f)) / max(CosTheta, 0.0001f);
+    return Info.Bias + Info.SlopeBias * min(TanTheta, Info.MaxSlope);
+}
+
+// Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
+float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
+    FShadowInfo Info = ShadowInfos[ShadowIndex];
+    float4 Clip = mul(float4(WorldPosition, 1.0f), Info.ViewProjection);
+    float3 Ndc = Clip.xyz / Clip.w;
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
+    float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
+    float Bias = ComputeShadowBias(Info, GeoNormal, normalize(ToLightDirection));
+    return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
+}
+
 // Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.
 float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
 {
@@ -195,9 +216,7 @@ float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPositi
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f || Distance <= 0.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
-    float CosTheta = saturate(dot(normalize(GeoNormal), ToLight / Distance));
-    float TanTheta = sqrt(max(1.0f - CosTheta * CosTheta, 0.0f)) / max(CosTheta, 0.0001f);
-    float Bias = Info.Bias + Info.SlopeBias * min(TanTheta, Info.MaxSlope);
+    float Bias = ComputeShadowBias(Info, GeoNormal, ToLight / Distance);
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
@@ -336,7 +355,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #else
         float GeoFactor = 1.0f;
 #endif
-        AccumulateLight(Il * GeoFactor, N, L, V, n, DiffuseLight, SpecularLight);
+        float Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
+        AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }
 
     // Opaque 깊이 기반 타일 목록은 반투명에 필요한 라이트를 누락할 수 있어

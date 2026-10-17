@@ -22,6 +22,9 @@ public:
 	// 루트노드부터 Bounding Box 재계산
 	void Refit();
 
+	// Build/Refit에서 갱신한 경계의 비소유 참조. 빈 BVH는 nullptr을 반환한다.
+	const FBox* GetRootBounds() const { return Elements.IsEmpty() ? nullptr : &RootBounds; }
+
 	template <typename TBoundsPredicate, typename TVisitor>
 	void Query(TBoundsPredicate&& BoundsTest, TVisitor&& Visitor) const;
 

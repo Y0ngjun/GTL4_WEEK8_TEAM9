@@ -270,9 +270,13 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     {
         BuildShadowRequests(World.GetScene(), Slot.Data);
         for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
+        {
             if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Spot)
                 PrepareSpotShadow(World, Index, Slot.Data);
-        // Directional/Point는 각 구현 단계까지 ShadowIndex를 무효로 유지한다.
+            else if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Directional)
+                PrepareDirectionalShadow(World, Index, Slot.Data);
+        }
+        // Point는 해당 구현 단계까지 ShadowIndex를 무효로 유지한다.
         Slot.PreparedFrame = FrameNumber;
     }
     return &Slot.Data;
@@ -323,6 +327,57 @@ void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShad
     Info.LightType = static_cast<uint32>(ELightType::Spot);
     Info.Bias = Light->GetShadowBias() * Info.InvRadius;
     Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
+    Info.MaxSlope = Light->GetShadowMaxSlope();
+    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
+    Frame.ShadowInfos.Add(Info);
+    Frame.ShadowDepthPassInfos.Add(std::move(Pass));
+}
+
+void FSceneRenderer::PrepareDirectionalShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame)
+{
+    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
+    const auto* Light = static_cast<const FDirectionalLightSceneProxy*>(Request.Light);
+    const FVector Forward = Light->GetInfo().Direction.GetSafeNormal();
+    if (Forward.Dot(Forward) == 0.0f) return;
+
+    // 기존 BVH가 갱신한 장면 경계를 재사용한다. 실제 Caster 선별은 Queue 수집에서 한다.
+    const FBox* Bounds = World.GetScene().BVH.GetRootBounds();
+    if (!Bounds) return;
+    const FVector Center = (Bounds->Min + Bounds->Max) * 0.5f;
+    const float Radius = (Bounds->Max - Center).Size();
+    if (Radius <= 0.0f) return;
+
+    // 장면 AABB를 덮는 구: Eye=C-d*2r, 폭/높이=2r, Near=r, Far=3r.
+    const FVector Eye = Center - Forward * (2.0f * Radius);
+    const FVector UpGuide = std::abs(Forward.Z) > 0.99f ? FVector(0, 1, 0) : FVector(0, 0, 1);
+    const FVector Right = FVector::Cross(UpGuide, Forward).GetSafeNormal();
+    const FVector Up = FVector::Cross(Forward, Right);
+    FMatrix Rotation = FMatrix::Identity;
+    Rotation.SetAxis(0, Forward);
+    Rotation.SetAxis(1, Right);
+    Rotation.SetAxis(2, Up);
+    const FMatrix View = FMatrix::MakeTranslation(Eye * -1.0f) * Rotation.GetTransposed();
+    FCameraProjection Projection;
+    Projection.Mode = EProjectionMode::Orthographic;
+    Projection.OrthoWidth = 2.0f * Radius;
+    Projection.NearClip = Radius;
+    Projection.FarClip = 3.0f * Radius;
+
+    FShadowDepthPassInfo Pass;
+    Pass.RequestIndex = RequestIndex;
+    Pass.ArraySlice = Request.ShadowMapIndex;
+    Pass.ViewProjection = View * Projection.GetMatrix(1.0f);
+    Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
+    BuildShadowCasterQueue(World, Pass);
+
+    FShadowInfo Info;
+    Info.ViewProjection = Pass.ViewProjection;
+    Info.ShadowMapIndex = Request.ShadowMapIndex;
+    Info.LightType = static_cast<uint32>(ELightType::Directional);
+    // Orthographic 깊이는 선형이므로 월드 Bias를 Far-Near로 나눈다.
+    const float InvDepthRange = 1.0f / (Projection.FarClip - Projection.NearClip);
+    Info.Bias = Light->GetShadowBias() * InvDepthRange;
+    Info.SlopeBias = Light->GetShadowSlopeBias() * InvDepthRange;
     Info.MaxSlope = Light->GetShadowMaxSlope();
     Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
     Frame.ShadowInfos.Add(Info);
