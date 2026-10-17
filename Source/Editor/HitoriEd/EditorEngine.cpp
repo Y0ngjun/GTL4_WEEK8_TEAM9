@@ -228,6 +228,15 @@ bool UEditorEngine::Init()
 
 	SettingsPanel->SetWorld(GetActiveWorld());
 	SettingsPanel->SetViewportsPanel(ViewportsPanel);
+    DetailsPanel->SetShadowPreviewQuery([this](ULightComponent* Light) -> const FShadowResources*
+    {
+        UWorld* PreviewWorld = Light->GetOwner() ? Light->GetOwner()->GetWorld() : nullptr;
+        if (!PreviewWorld) return nullptr;
+        const FWorldContext* Context = GetWorldContextFromWorld(PreviewWorld);
+        if (!Context) return nullptr;
+        const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
+        return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber() ? Resources : nullptr;
+    });
 	SettingsPanel->SetHasLitViewQuery([this]()
 	{
 		for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)

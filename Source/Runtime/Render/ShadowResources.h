@@ -10,6 +10,14 @@ inline constexpr uint32 InvalidShadowResourceIndex = ~0u;
 inline constexpr uint32 MaxShadowResourceSlots = 32;
 inline constexpr uint32 DefaultShadowResolution = 1024;
 
+// UI는 CPU Frame 정리 후 그려지므로 포인터 대신 Light UUID와 출력 위치만 보존한다.
+struct FShadowPreviewEntry
+{
+    uint32 LightId;
+    uint32 ShadowMapIndex;
+    bool bCube;
+};
+
 // Renderer의 한 World 슬롯이 소유한다. World/Context 포인터는 보관하지 않는다.
 struct FShadowResources
 {
@@ -19,6 +27,7 @@ struct FShadowResources
     ComPtr<ID3D11ShaderResourceView> ShadowInfoSRV;
     uint32 ShadowInfoCapacity = 0;
     uint32 NumShadowInfos = 0;
+    TArray<FShadowPreviewEntry> PreviewEntries;
     bool bReadyForShading = false;
     bool UploadShadowInfos(const TArray<FShadowInfo>& Infos);
 

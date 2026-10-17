@@ -5,6 +5,10 @@
 
 #include "Engine/World.h"
 
+#include <d3d11.h>
+#include <wrl/client.h>
+struct FShadowResources;
+class ULightComponent;
 struct FTransform;
 
 using DetailsSelectionCallback = std::function<void(UActorComponent*)>;
@@ -35,11 +39,19 @@ public:
 	void SetSelectionCallback(DetailsSelectionCallback InCallback) { Callback = InCallback; }
 	void SetDeleteComponentCallback(DetailsDeleteComponentCallback InCallback) { DeleteCallback = InCallback; }
 
+    void SetShadowPreviewQuery(std::function<const FShadowResources*(ULightComponent*)> InQuery) { ShadowPreviewQuery = std::move(InQuery); }
+
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
 
 	ImFont* GetCustomFont() { return CustomFont; }
 
 private:
+    void DrawShadowPreview(ULightComponent* Light);
+    std::function<const FShadowResources*(ULightComponent*)> ShadowPreviewQuery;
+    int PreviewFace = 0;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> PreviewTexture;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> PreviewSRV;
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> PreviewShader;
 	void DrawSceneComponentNode(USceneComponent* Component, USceneComponent* Root, UActorComponent*& OutSelectedComponent);
 	void TryReparent(USceneComponent* DroppedComponent, USceneComponent* DragComponent);
 

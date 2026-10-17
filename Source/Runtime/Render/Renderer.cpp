@@ -807,6 +807,7 @@ bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShad
     Resources.bDepthReady = false;
     Resources.bReadyForShading = false;
     Resources.NumShadowInfos = 0;
+    Resources.PreviewEntries.Reset();
     if (Frame.ShadowDepthPassInfos.IsEmpty()) return false;
 
     uint32 SliceCount = 0;
@@ -838,6 +839,9 @@ bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShad
         if (!DrawShadowDepth(Request, Pass, DSV, Resolution, Resolution)) return false;
     }
     Resources.bDepthReady = true;
+    for (const FShadowRequestPerLight& Request : Frame.ShadowRequestsPerLight)
+        if (Request.ShadowIndex != InvalidShadowIndex)
+            Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), Request.ShadowMapIndex, Request.Light->GetLightType() == ELightType::Point});
     // Pass와 조회 정보의 연결 및 Cube 6면 준비는 Light별 준비 코드가 책임진다.
     Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
     return true;
