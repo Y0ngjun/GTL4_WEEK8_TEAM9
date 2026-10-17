@@ -455,6 +455,7 @@ void UEditorEngine::RenderViewports()
 	bPIEWindowRendered = false;
 	const bool bRenderPIEWindow = IsPIEInWindow() && UpdatePIEWindowTargets();
 	SceneRenderer.BeginFrame();
+	ShadowRenderedWorld = nullptr;
 	for (int32 ViewIndex = 0; ViewIndex < ViewportsPanel->GetSlotCount(); ++ViewIndex)
 	{
 		FViewport& Viewport = *ViewportsPanel->GetViewport(ViewIndex);
@@ -899,16 +900,21 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	// Pass 1
 	FShadowSceneSetup ShadowSetup;
 	const bool bShadowView = View.RenderMode.ViewMode == EViewMode::Lit && SettingsPanel->GetSettings().bDrawPrimitives;
-	if (bShadowView)
-	{
-		BuildShadowSceneSetup(ViewWorld.GetScene(), bShadowView, ShadowSetup);
-	}
+	BuildShadowSceneSetup(ViewWorld.GetScene(), bShadowView, ShadowSetup);
 
 	ViewWorld.GetScene().BuildLightingConstants(Lighting);
 	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
-	Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(), ShadowSetup);
+	const bool bShadowMapsReady = bShadowView && ShadowRenderedWorld == &ViewWorld;
+	if (!bShadowMapsReady)
+	{
+		Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(), ShadowSetup);
+		if (bShadowView)
+		{
+			ShadowRenderedWorld = &ViewWorld;
+		}
+	}	
 	Renderer->BindShadowResources(ShadowSetup);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)

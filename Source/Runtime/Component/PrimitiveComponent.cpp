@@ -114,6 +114,12 @@ bool UPrimitiveComponent::MoveComponent(const FVector& Delta, const FRotator& Ne
 	return true;
 }
 
+void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)
+{
+	Super::PostEditChangeProperty(Property);
+	MarkRenderStateDirty();
+}
+
 bool UPrimitiveComponent::TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult)
 {
 	FBox MeshBox = Mesh.AABB.GetWorldAABB(WorldMatrix);

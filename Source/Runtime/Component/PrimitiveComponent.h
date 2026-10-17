@@ -28,6 +28,7 @@ class UPrimitiveComponent :public USceneComponent
 	// (빌보드는 단일 머티리얼, 스태틱 메시는 슬롯별 덮어쓰기) 각자 등록한다.
 	REFLECT_START(ClassName)
 		PROPERTY(bVisible)
+		PROPERTY(bCastShadow)
 	REFLECT_END()
 public:
 	UPrimitiveComponent();
@@ -75,10 +76,14 @@ public:
 
 	virtual bool MoveComponent(const FVector& Delta, const FRotator& NewRotation, bool bSweep, FHitResult* Hit = nullptr) override;
 
+	bool CastsShadow() const { return bCastShadow; }
+	virtual void PostEditChangeProperty(const FProperty& Property) override;
+
 protected:
 	bool TraceMesh(const FRay& WorldRay, const FStaticMeshData& Mesh, const FMatrix& WorldMatrix, FHitResult& OutResult);
 	bool TraceMeshLocal(const FRay& LocalRay, const FStaticMeshData& Mesh, float& OutT);
 	bool bVisible = true;
+	bool bCastShadow = true;
 
 private:
 	friend class FScene;

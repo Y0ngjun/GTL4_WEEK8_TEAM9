@@ -14,6 +14,7 @@ class ULightComponentBase : public USceneComponent
 		PROPERTY(LightColor)
 		PROPERTY(Intensity)
 		PROPERTY(bVisible)
+		PROPERTY(bCastShadows)
 	REFLECT_END()
 
 public:
@@ -43,10 +44,13 @@ public:
 	virtual void PostEditChangeProperty(const FProperty& Property) override;
 	virtual void OnTransformDirty() override;
 
+	bool CastsShadows() const { return bCastShadows; }
+
 protected:
 	FColor LightColor = FColor(255, 255, 255);
 	float Intensity = 1.0f;
 	bool bVisible = true;
+	bool bCastShadows = true;
 
 private:
 	friend class FScene;

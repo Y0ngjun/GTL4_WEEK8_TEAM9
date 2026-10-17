@@ -789,7 +789,7 @@ void FRenderer::RenderShadowDepth(FShadowDepthTarget& Target, uint32 Slice, cons
 		[&](FPrimitiveSceneProxy* Proxy)
 		{
 			UStaticMesh* Mesh = Proxy->GetMesh();
-			if (!Proxy->IsVisible() || !Mesh)
+			if (!Proxy->IsVisible() ||!Proxy->CastsDynamicShadow()|| !Mesh)
 			{
 				return;
 			}

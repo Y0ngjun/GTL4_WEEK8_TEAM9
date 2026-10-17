@@ -42,6 +42,7 @@ void FPrimitiveSceneProxy::UpdateRenderState()
     Mesh = nullptr;
     RenderState.reset();
     bVisible = Component->IsVisible();
+    bCastShadow = Component->CastsShadow();
     UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(Component);
     if (StaticMeshComponent) Mesh = StaticMeshComponent->GetStaticMesh();
     if (Mesh != PreviousMesh)

@@ -33,6 +33,8 @@ public:
     const FCachedMeshLOD& GetLOD(uint32 Index) const { return RenderState->LODs[Index]; }
     const FCachedMeshSection& GetSection(uint32 Index) const { return RenderState->Sections[Index]; }
     FScene* GetScene() const { return Scene; }
+    bool CastsDynamicShadow() const { return bCastShadow; }
+
 private:
     friend class FScene;
     FScene* Scene = nullptr;
@@ -48,4 +50,5 @@ private:
     bool bQueuedForUpdate = false;
     bool bRenderStateQueued = false;
     bool bVisible = true;
+    bool bCastShadow = true;
 };

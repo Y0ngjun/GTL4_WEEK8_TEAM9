@@ -34,7 +34,7 @@ bool ComputeShadowCasterBounds(const FScene& Scene, FAABB& OutBounds)
 	for (int32 Index = 0; Index < Scene.Proxies.Num(); ++Index)
 	{
 		const FPrimitiveSceneProxy* Proxy = Scene.Proxies[Index];
-		if (!Proxy->IsVisible() || !Proxy->GetMesh())
+		if (!Proxy->IsVisible() || !Proxy->GetMesh() || !Proxy->CastsDynamicShadow())
 		{
 			continue;
 		}
@@ -95,9 +95,16 @@ FProjectedShadowInfo MakeDirectionalShadowInfo(const FVector& LightDirection, co
 
 bool BuildDirectionalShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutShadow)
 {
-	FLightingConstants Lighting;
-	Scene.BuildLightingConstants(Lighting);
-	if (Lighting.Directional.Direction.Size() < 0.5f)
+	const FDirectionalLightSceneProxy* Directional = nullptr;
+	for (const FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		if (Proxy->IsVisible() && Proxy->GetLightType() == ELightType::Directional)
+		{
+			Directional = static_cast<const FDirectionalLightSceneProxy*>(Proxy);
+		}
+	}
+
+	if (!Directional || !Directional->CastsDynamicShadow())
 	{
 		return false;
 	}
@@ -108,7 +115,7 @@ bool BuildDirectionalShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutSh
 		return false;
 	}
 
-	OutShadow = MakeDirectionalShadowInfo(Lighting.Directional.Direction, Bounds);
+	OutShadow = MakeDirectionalShadowInfo(Directional->GetInfo().Direction, Bounds);
 	return true;
 }
 
@@ -202,7 +209,7 @@ void BuildShadowSceneSetup(const FScene& Scene, bool bEnabled, FShadowSceneSetup
 
 	for (FLightSceneProxy* Proxy : Scene.Lights)
 	{
-		if (!Proxy->IsVisible())
+		if (!Proxy->IsVisible() || !Proxy->CastsDynamicShadow())
 		{
 			continue;
 		}

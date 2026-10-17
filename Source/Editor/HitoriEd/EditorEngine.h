@@ -189,6 +189,8 @@ private:
 	bool bStepRequested = false;
 	bool bIsPaused = false;
 
+	const UWorld* ShadowRenderedWorld = nullptr;
+
 	void ResetSceneSelection();
 
 	void CreateNewScene();

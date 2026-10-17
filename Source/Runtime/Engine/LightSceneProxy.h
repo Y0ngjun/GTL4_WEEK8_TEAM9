@@ -27,11 +27,13 @@ public:
 	int32 GetShadowIndex() const { return ShadowIndex; }
 	void SetShadowIndex(int32 InShadowIndex) { ShadowIndex = InShadowIndex; }
 
+	bool CastsDynamicShadow() const { return bCastShadows; }
 
 protected:
 	ULightComponentBase* Component = nullptr;
 	bool bVisible = true;
 	int32 ShadowIndex = -1;
+	bool bCastShadows = true;
 
 private:
 	friend class FScene;
@@ -50,6 +52,7 @@ public:
 		const UAmbientLightComponent* Light = static_cast<const UAmbientLightComponent*>(Component);
 		Info = Light->GetAmbientLightInfo();
 		bVisible = Light->IsLightVisible();
+		bCastShadows = Light->CastsShadows();
 	}
 
 	const FAmbientLightInfo& GetInfo() const { return Info; }
@@ -68,6 +71,7 @@ public:
 		const UDirectionalLightComponent* Light = static_cast<const UDirectionalLightComponent*>(Component);
 		Info = Light->GetDirectionalLightInfo();
 		bVisible = Light->IsLightVisible();
+		bCastShadows = Light->CastsShadows();
 	}
 
 	const FDirectionalLightInfo& GetInfo() const { return Info; }
@@ -86,6 +90,7 @@ public:
 		const UPointLightComponent* Light = static_cast<const UPointLightComponent*>(Component);
 		Info = Light->GetPointLightInfo();
 		bVisible = Light->IsLightVisible();
+		bCastShadows = Light->CastsShadows();
 	}
 
 	const FPointLightInfo& GetInfo() const { return Info; }
@@ -121,6 +126,7 @@ public:
         }
         CullingSphereCenter = Info.Position + Info.Direction * SphereOffset;
 		bVisible = Light->IsLightVisible();
+		bCastShadows = Light->CastsShadows();
 	}
 
 	const FSpotLightInfo& GetInfo() const { return Info; }

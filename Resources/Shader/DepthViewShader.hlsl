@@ -39,8 +39,6 @@ float4 mainPS(PSInput Input) : SV_Target
 
     // 카메라 앞쪽 축으로 투영한 거리 = z_v (뷰 공간 깊이)
     float ViewDepth = dot(WorldPos.xyz - CameraPosition, CameraForward);
-
-        
         
     float Shade = saturate(ViewDepth / VisualizeRange);
     return float4(Shade.xxx, 1.0f);
