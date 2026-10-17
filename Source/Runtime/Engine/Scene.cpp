@@ -301,14 +301,17 @@ void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray
             if (!Proxy->IsVisible() || Proxy->GetLightType() != Type) continue;
             if (Type == ELightType::Point)
             {
-                const FPointLightInfo& Info = static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
+                FPointLightInfo Info = static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
+				Info.ShadowIndex = Proxy->GetShadowIndex();
                 OutPointLight.Add(Info);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius});
             }
             else
             {
                 const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);
-                OutSpotLight.Add(Spot->GetInfo());
+				FSpotLightInfo Info = Spot->GetInfo();
+				Info.ShadowIndex = Proxy->GetShadowIndex();
+                OutSpotLight.Add(Info);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Spot->GetCullingSphereCenter()), Spot->GetCullingSphereRadius()});
             }
         }

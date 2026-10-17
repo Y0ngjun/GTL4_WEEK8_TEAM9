@@ -1,16 +1,14 @@
 #ifndef SHADOW_COMMON_HLSLI
 #define SHADOW_COMMON_HLSLI
 
+#define MAX_SHADOWED_SPOT_LIGHTS 4 // C++ MaxShadowedSpotLights와 같아야 함
+
 cbuffer ShadowConstants : register(b5)
 {
     matrix DirectionalShadowViewProjection;
-    matrix SpotShadowViewProjection;
+    matrix SpotShadowViewProjection[MAX_SHADOWED_SPOT_LIGHTS];
     uint bHasDirectionalShadow;
-    uint bHasSpotShadow;
-    uint bHasPointShadow;
-    float PointShadowInvRadius;
-    float3 PointShadowLightPosition;
-    float2 ShadowPadding;
+    float3 ShadowPadding;
 }
 
 Texture2DArray DirectionalShadowMap : register(t12);
@@ -50,37 +48,36 @@ float GetDirectionalShadow(float3 WorldPosition)
     return CompareShadowDepth(DirectionalShadowMap, 0.0f, ProjectToShadowMap(WorldPosition, DirectionalShadowViewProjection));
 }
 
-float GetSpotShadow(float3 WorldPosition)
+float GetSpotShadow(int ShadowIndex, float3 WorldPosition)
 {
-    if (bHasSpotShadow == 0u)
+    if (ShadowIndex < 0)
     {
         return 1.0f;
     }
    
-    float4 Clip = mul(float4(WorldPosition, 1.0f), SpotShadowViewProjection);
+    float4 Clip = mul(float4(WorldPosition, 1.0f), SpotShadowViewProjection[ShadowIndex]);
     if (Clip.w <= 0.0f)
     {
         return 1.0f;
     }
-    return CompareShadowDepth(SpotShadowMap, 0.0f, ClipToShadowCoord(Clip));
+    return CompareShadowDepth(SpotShadowMap, (float)ShadowIndex, ClipToShadowCoord(Clip));
 }
 
-float GetPointShadow(float3 WorldPosition)
+float GetPointShadow(int ShadowIndex, float3 WorldPosition, float3 LightPosition, float Radius)
 {
-    if (bHasPointShadow == 0u)
+    if (ShadowIndex < 0)
     {
         return 1.0f;
     }
 
-    float3 LightToPixel = WorldPosition - PointShadowLightPosition;
-    float MyDistance = length(LightToPixel) * PointShadowInvRadius;
+    float3 LightToPixel = WorldPosition - LightPosition;
+    float MyDistance = length(LightToPixel) / Radius;
     if (MyDistance > 1.0f)
     {
         return 1.0f;
     }
     
-    float StoredDistance = PointShadowMap.SampleLevel(ShadowPointSampler, float4(LightToPixel, 0.0f), 0.0f).r;
-    
+    float StoredDistance = PointShadowMap.SampleLevel(ShadowPointSampler, float4(LightToPixel, (float)ShadowIndex), 0.0f).r;
     return MyDistance > StoredDistance ? 0.0f : 1.0f;
 }
 #endif

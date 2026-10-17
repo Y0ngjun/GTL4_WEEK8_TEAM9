@@ -45,15 +45,11 @@ struct FShadowSceneSetup
 struct FShadowConstants
 {
 	FMatrix DirectionalShadowViewProjection;
-	FMatrix SpotShadowViewProjection;
+	FMatrix SpotShadowViewProjection[MaxShadowedSpotLights];
 	uint32 bHasDirectionalShadow = 0;
-	uint32 bHasSpotShadow = 0;
-	uint32 bHasPointShadow = 0;
-	float PointShadowInvRadius = 0.0f;
-	FVector PointShadowLightPosition{};
-	float Padding = 0.0f;
+	float Padding[3] = {};
 };
-static_assert(sizeof(FShadowConstants) == 160, "HLSL b5 레이아웃과 같아야 한다");
+static_assert(sizeof(FShadowConstants) == 336, "HLSL b5 레이아웃과 같아야 한다");
 
 struct FShadowDepthConstants
 {
@@ -79,4 +75,4 @@ bool BuildSpotShadowInfo(const FScene& Scene, FProjectedShadowInfo& OutShadow);
 void MakePointShadowInfo(const FPointLightInfo& Point, FPointShadowSetup& OutSetup);
 bool BuildPointShadowInfo(const FScene& Scene, FPointShadowSetup& OutSetup);
 
-void BuildShadowSceneSetup(const FScene& Scene, FShadowSceneSetup& OutSetup);
+void BuildShadowSceneSetup(const FScene& Scene, bool bEnabled, FShadowSceneSetup& OutSetup);

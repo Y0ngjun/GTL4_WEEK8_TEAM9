@@ -26,7 +26,7 @@ struct FPointLightInfo
 	FVector Color;
 	float AttenuationRadius = 0.0f;
 	FVector Position;
-	float Padding = 0.0f;
+	int32 ShadowIndex = -1;
 };
 
 struct FSpotLightInfo
@@ -37,6 +37,8 @@ struct FSpotLightInfo
 	float CosInnerCone = 1.0f;
 	FVector Direction;
 	float CosOuterCone = 1.0f;
+	int32 ShadowIndex = -1;
+	float Padding[3] = {};
 };
 
 struct FLightingConstants
@@ -53,5 +55,5 @@ struct FLightingConstants
 static_assert(sizeof(FAmbientLightInfo) == 16);
 static_assert(sizeof(FDirectionalLightInfo) == 32);
 static_assert(sizeof(FPointLightInfo) == 32);
-static_assert(sizeof(FSpotLightInfo) == 48);
-static_assert(sizeof(FLightingConstants) == 384);
+static_assert(sizeof(FSpotLightInfo) == 64);
+static_assert(sizeof(FLightingConstants) == 448);

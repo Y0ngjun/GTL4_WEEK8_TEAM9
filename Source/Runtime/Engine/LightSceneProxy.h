@@ -24,9 +24,14 @@ public:
 	FScene* GetScene() const { return Scene; }
 	bool IsVisible() const { return bVisible; }
 
+	int32 GetShadowIndex() const { return ShadowIndex; }
+	void SetShadowIndex(int32 InShadowIndex) { ShadowIndex = InShadowIndex; }
+
+
 protected:
 	ULightComponentBase* Component = nullptr;
 	bool bVisible = true;
+	int32 ShadowIndex = -1;
 
 private:
 	friend class FScene;

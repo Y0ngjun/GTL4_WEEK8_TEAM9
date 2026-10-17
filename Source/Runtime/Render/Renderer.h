@@ -111,7 +111,7 @@ public:
 
 	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
-	void BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow);
+	void BindShadowResources(const FShadowSceneSetup& Setup);
 	void RenderShadowDepthMaps(const FScene& Scene,
 		const FShadowSceneSetup& Setup);
 

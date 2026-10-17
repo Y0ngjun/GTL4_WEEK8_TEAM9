@@ -692,31 +692,24 @@ void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix&
 	RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
 
-void FRenderer::BindShadowResources(const FProjectedShadowInfo* DirectionalShadow, const FProjectedShadowInfo* SpotShadow, const FPointShadowSetup* PointShadow)
+void FRenderer::BindShadowResources(const FShadowSceneSetup& Setup)
 {
 	FShadowConstants Constants{};
 
-	const bool bDirectional = DirectionalShadow && DirectionalShadowTarget.IsValid();
+	const bool bDirectional = Setup.bHasDirectional && DirectionalShadowTarget.IsValid();
 	if (bDirectional)
 	{
-		Constants.DirectionalShadowViewProjection = DirectionalShadow->ViewProjection;
+		Constants.DirectionalShadowViewProjection = Setup.Directional.ViewProjection;
 		Constants.bHasDirectionalShadow = 1;
 	}
 
-	const bool bSpot = SpotShadow && SpotShadowTarget.IsValid();
-	if (bSpot)
+	for (uint32 Index = 0; Index < Setup.NumSpots; ++Index)
 	{
-		Constants.SpotShadowViewProjection = SpotShadow->ViewProjection;
-		Constants.bHasSpotShadow = 1;
+		Constants.SpotShadowViewProjection[Index] = Setup.Spots[Index].ViewProjection;
 	}
 
-	const bool bPoint = PointShadow && PointShadowTarget.IsValid();
-	if (bPoint)
-	{
-		Constants.bHasPointShadow = 1;
-		Constants.PointShadowLightPosition = PointShadow->LightPosition;
-		Constants.PointShadowInvRadius = 1.0f / std::max(PointShadow->Radius, 0.001f);
-	}
+	const bool bSpot = Setup.NumSpots > 0 && SpotShadowTarget.IsValid();
+	const bool bPoint = Setup.NumPoints > 0 && PointShadowTarget.IsValid();
 
 	RenderCommand::UpdateBufferData(ShadowCB.get(), &Constants);
 	RenderCommand::BindConstantBuffer(5, ShadowCB.get(), EShaderBindFlagBits::Pixel);

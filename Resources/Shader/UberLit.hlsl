@@ -56,7 +56,7 @@ struct FPointLightInfo
     float3 Color;
     float AttenuationRadius;
     float3 Position;
-    float Padding;
+    int ShadowIndex;
 };
 
 struct FSpotLightInfo
@@ -67,6 +67,8 @@ struct FSpotLightInfo
     float CosInnerCone;
     float3 Direction;
     float CosOuterCone;
+    int ShadowIndex;
+    float3 SpotPadding;
 };
 
 struct FVSInput
@@ -335,7 +337,7 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
             
-            float Shadow = LightIndex == 0u ? GetPointShadow(WorldPosition) : 1.0f;
+            float Shadow = GetPointShadow(Light.ShadowIndex, WorldPosition, Light.Position, Light.AttenuationRadius);
             float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
         }
@@ -352,28 +354,27 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             {
                 continue;
             }
-                float3 L = ToLight / Distance;
+            float3 L = ToLight / Distance;
             
 #if USE_NORMAL_MAP
-                float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
-                if (GeoFactor <= 0.0f)
-                    continue;
+            float GeoFactor = saturate(dot(GeoNormal, L) * 4.0f);
+            if (GeoFactor <= 0.0f)
+                continue;
 #else
             float GeoFactor = 1.0f;
 #endif
 
-                float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-                float CosAngle = dot(-L, normalize(Light.Direction));
-                float SpotAttenuation = Light.CosInnerCone == Light.CosOuterCone
+            float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
+            float CosAngle = dot(-L, normalize(Light.Direction));
+            float SpotAttenuation = Light.CosInnerCone == Light.CosOuterCone
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
             
-                float Shadow = LightIndex == 0u ? GetSpotShadow(WorldPosition) : 1.0f;
-
-                float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
-                AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
-            }
+            float Shadow = GetSpotShadow(Light.ShadowIndex, WorldPosition);
+            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
+            AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
         }
+    }
 }
 
 FPSInput mainVS(FVSInput Input)

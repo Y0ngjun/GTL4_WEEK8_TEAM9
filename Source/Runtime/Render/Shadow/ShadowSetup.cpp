@@ -185,12 +185,22 @@ bool BuildPointShadowInfo(const FScene& Scene, FPointShadowSetup& OutSetup)
 	return false;
 }
 
-void BuildShadowSceneSetup(const FScene& Scene, FShadowSceneSetup& OutSetup)
+void BuildShadowSceneSetup(const FScene& Scene, bool bEnabled, FShadowSceneSetup& OutSetup)
 {
 	OutSetup = FShadowSceneSetup{};
+	for (FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		Proxy->SetShadowIndex(-1);
+	}
+
+	if (!bEnabled)
+	{
+		return;
+	}
+
 	OutSetup.bHasDirectional = BuildDirectionalShadowInfo(Scene, OutSetup.Directional);
 
-	for (const FLightSceneProxy* Proxy : Scene.Lights)
+	for (FLightSceneProxy* Proxy : Scene.Lights)
 	{
 		if (!Proxy->IsVisible())
 		{
@@ -199,11 +209,13 @@ void BuildShadowSceneSetup(const FScene& Scene, FShadowSceneSetup& OutSetup)
 
 		if (Proxy->GetLightType() == ELightType::Spot && OutSetup.NumSpots < MaxShadowedSpotLights)
 		{
+			Proxy->SetShadowIndex(static_cast<int32>(OutSetup.NumSpots));
 			const FSpotLightInfo& Info = static_cast<const FSpotLightSceneProxy*>(Proxy)->GetInfo();
 			OutSetup.Spots[OutSetup.NumSpots++] = MakeSpotShadowInfo(Info);
 		}
 		else if (Proxy->GetLightType() == ELightType::Point && OutSetup.NumPoints < MaxShadowedPointLights)
 		{
+			Proxy->SetShadowIndex(static_cast<int32>(OutSetup.NumPoints));
 			const FPointLightInfo& Info = static_cast<const FPointLightSceneProxy*>(Proxy)->GetInfo();
 			MakePointShadowInfo(Info, OutSetup.Points[OutSetup.NumPoints++]);
 		}

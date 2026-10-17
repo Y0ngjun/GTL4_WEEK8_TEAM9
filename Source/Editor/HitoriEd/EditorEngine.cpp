@@ -896,23 +896,20 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	FLightingConstants Lighting;
 	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
-	ViewWorld.GetScene().BuildLightingConstants(Lighting);
-	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
-	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
-
 	// Pass 1
 	FShadowSceneSetup ShadowSetup;
 	const bool bShadowView = View.RenderMode.ViewMode == EViewMode::Lit && SettingsPanel->GetSettings().bDrawPrimitives;
 	if (bShadowView)
 	{
-		BuildShadowSceneSetup(ViewWorld.GetScene(), ShadowSetup);
+		BuildShadowSceneSetup(ViewWorld.GetScene(), bShadowView, ShadowSetup);
 	}
 
+	ViewWorld.GetScene().BuildLightingConstants(Lighting);
+	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
+	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
+
 	Renderer->RenderShadowDepthMaps(ViewWorld.GetScene(), ShadowSetup);
-	Renderer->BindShadowResources(
-		ShadowSetup.bHasDirectional ? &ShadowSetup.Directional : nullptr,
-		ShadowSetup.NumSpots > 0 ? &ShadowSetup.Spots[0] : nullptr,
-		ShadowSetup.NumPoints > 0 ? &ShadowSetup.Points[0] : nullptr);
+	Renderer->BindShadowResources(ShadowSetup);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
