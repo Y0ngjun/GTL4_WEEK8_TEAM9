@@ -281,6 +281,10 @@ void FRenderDevice::CreateStates()
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::LinearClamp].GetAddressOf());
 
+		Desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::PointClamp].GetAddressOf());
+
+		Desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
 		Desc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
 		Desc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
 		Desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;

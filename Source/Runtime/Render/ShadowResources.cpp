@@ -22,3 +22,41 @@ bool FShadowResources::EnsureCapacity(uint32 Resolution, uint32 SliceCount, uint
     if (NewCube) DepthCube = std::move(NewCube);
     return true;
 }
+
+// LocalLight와 같은 dynamic StructuredBuffer 경로. 용량이 충분하면 재사용한다.
+bool FShadowResources::UploadShadowInfos(const TArray<FShadowInfo>& Infos)
+{
+    NumShadowInfos = 0;
+    const uint32 Count = static_cast<uint32>(Infos.Num());
+    if (Count == 0) return false;
+    ID3D11Device* Device = RenderCommand::GetDevice();
+    if (Count > ShadowInfoCapacity)
+    {
+        const uint32 Capacity = std::max(Count, 16u);
+        D3D11_BUFFER_DESC Desc{};
+        Desc.ByteWidth = Capacity * sizeof(FShadowInfo);
+        Desc.Usage = D3D11_USAGE_DYNAMIC;
+        Desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        Desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        Desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        Desc.StructureByteStride = sizeof(FShadowInfo);
+        ComPtr<ID3D11Buffer> Buffer;
+        ComPtr<ID3D11ShaderResourceView> SRV;
+        if (FAILED(Device->CreateBuffer(&Desc, nullptr, Buffer.GetAddressOf()))) return false;
+        D3D11_SHADER_RESOURCE_VIEW_DESC View{};
+        View.Format = DXGI_FORMAT_UNKNOWN;
+        View.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        View.Buffer.NumElements = Capacity;
+        if (FAILED(Device->CreateShaderResourceView(Buffer.Get(), &View, SRV.GetAddressOf()))) return false;
+        ShadowInfoBuffer = std::move(Buffer);
+        ShadowInfoSRV = std::move(SRV);
+        ShadowInfoCapacity = Capacity;
+    }
+    ID3D11DeviceContext* Context = RenderCommand::GetContext();
+    D3D11_MAPPED_SUBRESOURCE Mapped{};
+    if (FAILED(Context->Map(ShadowInfoBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &Mapped))) return false;
+    std::memcpy(Mapped.pData, Infos.GetData(), Count * sizeof(FShadowInfo));
+    Context->Unmap(ShadowInfoBuffer.Get(), 0);
+    NumShadowInfos = Count;
+    return true;
+}

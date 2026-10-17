@@ -2,6 +2,18 @@
 #include "Scene.h"
 #include "LightSceneProxy.h"
 #include "Render/ColorWorkflow.h"
+#include "Render/ShadowFrameData.h"
+
+namespace
+{
+uint32 FindShadowIndex(const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight, const FLightSceneProxy* Light)
+{
+    if (ShadowRequestsPerLight)
+        for (const FShadowRequestPerLight& Request : *ShadowRequestsPerLight)
+            if (Request.Light == Light) return Request.ShadowIndex;
+    return InvalidShadowIndex;
+}
+}
 
 void FScene::AddPrimitive(UPrimitiveComponent* Component)
 {
@@ -168,7 +180,7 @@ void FScene::MarkLightDirty(FLightSceneProxy* Proxy)
 	DirtyLights.Add(Proxy);
 }
 
-void FScene::BuildLightingConstants(FLightingConstants& Out) const
+void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight) const
 {
 	Out = FLightingConstants{};
 
@@ -183,14 +195,23 @@ void FScene::BuildLightingConstants(FLightingConstants& Out) const
 			break;
 		case ELightType::Directional:
 			Out.Directional = static_cast<const FDirectionalLightSceneProxy*>(Proxy)->GetInfo();
+			Out.Directional.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
 			break;
 		case ELightType::Point:
 			if (Out.NumPointLights < MaxPointLights)
-				Out.PointLights[Out.NumPointLights++] = static_cast<const FPointLightSceneProxy*>(Proxy)->GetInfo();
+            {
+                FPointLightInfo& Info = Out.PointLights[Out.NumPointLights++];
+                Info = static_cast<const FPointLightSceneProxy*>(Proxy)->GetInfo();
+                Info.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
+            }
 			break;
 		case ELightType::Spot:
 			if (Out.NumSpotLights < MaxSpotLights)
-				Out.SpotLights[Out.NumSpotLights++] = static_cast<const FSpotLightSceneProxy*>(Proxy)->GetInfo();
+            {
+                FSpotLightInfo& Info = Out.SpotLights[Out.NumSpotLights++];
+                Info = static_cast<const FSpotLightSceneProxy*>(Proxy)->GetInfo();
+                Info.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
+            }
 			break;
 		}
 	}
@@ -288,7 +309,7 @@ void FScene::MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy)
 	RenderStateDirtyProxies.Add(Proxy);
 }
 
-void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix) const
+void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight) const
 {
     OutPointLight.Reset();
     OutSpotLight.Reset();
@@ -302,13 +323,17 @@ void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray
             if (Type == ELightType::Point)
             {
                 const FPointLightInfo& Info = static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
-                OutPointLight.Add(Info);
+                FPointLightInfo ShadingInfo = Info;
+                ShadingInfo.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
+                OutPointLight.Add(ShadingInfo);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius});
             }
             else
             {
                 const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);
-                OutSpotLight.Add(Spot->GetInfo());
+                FSpotLightInfo ShadingInfo = Spot->GetInfo();
+                ShadingInfo.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
+                OutSpotLight.Add(ShadingInfo);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Spot->GetCullingSphereCenter()), Spot->GetCullingSphereRadius()});
             }
         }

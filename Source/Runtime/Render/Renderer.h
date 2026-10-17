@@ -33,7 +33,11 @@ struct FPerObjectConstants
 {
 	FMatrix World;
 	FMatrix NormalMatrix;
+	uint32 bReceiveShadow = 0;
+	uint32 Padding[3] = {};
 };
+static_assert(sizeof(FPerObjectConstants) == 144);
+static_assert(offsetof(FPerObjectConstants, bReceiveShadow) == 128);
 static_assert(sizeof(FPerObjectConstants) <= ObjectSlotBytes);
 
 struct FViewConstants
@@ -46,11 +50,13 @@ static_assert(sizeof(FViewConstants) == 80, "HLSL b0 레이아웃(matrix + float
 
 inline FMatrix MakeNormalMatrix(const FMatrix& World) { return World.Inverse().GetTransposed(); }
 
-inline void WriteObjectSlot(uint8* SlotBase, uint32 Slot, const FMatrix& World, const FMatrix& NormalMatrix)
+inline void WriteObjectSlot(uint8* SlotBase, uint32 Slot, const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = false)
 {
 	uint8* Dest = SlotBase + static_cast<size_t>(Slot) * ObjectSlotBytes;
 	std::memcpy(Dest + offsetof(FPerObjectConstants, World), &World, sizeof(FMatrix));
 	std::memcpy(Dest + offsetof(FPerObjectConstants, NormalMatrix), &NormalMatrix, sizeof(FMatrix));
+	const uint32 Receive = bReceiveShadow ? 1u : 0u;
+	std::memcpy(Dest + offsetof(FPerObjectConstants, bReceiveShadow), &Receive, sizeof(Receive));
 }
 
 struct FSortEntry
@@ -87,6 +93,9 @@ public:
 	void ReleaseShadowResources(uint32 Index);
 	const FShadowResources* GetShadowResources(uint32 Index) const;
 	bool RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame, uint32 Resolution = DefaultShadowResolution);
+
+	// 매 View 호출한다. 비지원/실패 시 입력을 비워 이전 World의 바인딩을 남기지 않는다.
+	bool BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported);
 
 	void SetViewMode(const FViewRenderMode& Mode);
 	void SetLighting(const FLightingConstants& GlobalLights, const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights);
@@ -167,7 +176,7 @@ private:
 
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
-	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
+	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = false);
 
 	// 이번 프레임 스태틱 메시 묶음 (정렬 키 순). 비어 있지 않은 것만 담는다.
 	std::vector<const FStaticDrawGroup*> StaticGroups;

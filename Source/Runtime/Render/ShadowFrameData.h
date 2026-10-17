@@ -2,6 +2,7 @@
 
 #include "Render/RenderPacket.h"
 #include "Math/Frustum.h"
+#include "ShadowInfo.h"
 
 class FLightSceneProxy;
 
@@ -16,6 +17,9 @@ struct FShadowRequestPerLight
     // 배열별로 0부터 배정한다. Scene의 Light 번호나 GPU ShadowInfo 번호와는 무관하다.    
     // todo : 현재는 caching을 적용하지 않아서, 매 프레임 shadow map을 다시 그린다.
     uint32 ShadowMapIndex = 0;
+
+    // Light별 준비가 완료된 경우에만 ShadowInfos의 번호를 설정한다. 출력 slice와 다르다.
+    uint32 ShadowIndex = InvalidShadowIndex;
 };
 
 // 실제로 그릴 한 면의 CPU 자료다. 이 구조체 전체를 GPU 버퍼로 넘기지 않는다.
@@ -53,8 +57,12 @@ struct FShadowFrameData
     // Point Light라면 FShadowRequestPerLight 1개가 추가되면 FShadowDepthPassInfo는 6개가 추가된다.
     TArray<FShadowDepthPassInfo> ShadowDepthPassInfos;
 
+    // Light별 준비 함수가 완성된 조회 정보만 추가하고 Request.ShadowIndex를 연결한다.
+    TArray<FShadowInfo> ShadowInfos;
+
     void ResetFrame()
     {
+        ShadowInfos.Reset();
         ShadowDepthPassInfos.Reset();
         ShadowRequestsPerLight.Reset();
     }

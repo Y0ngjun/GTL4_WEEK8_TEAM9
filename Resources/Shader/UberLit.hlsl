@@ -48,7 +48,7 @@ struct FDirectionalLightInfo
     float3 Color;
     float Padding0;
     float3 Direction;
-    float Padding1;
+    uint ShadowIndex;
 };
 
 struct FPointLightInfo
@@ -56,7 +56,7 @@ struct FPointLightInfo
     float3 Color;
     float AttenuationRadius;
     float3 Position;
-    float Padding;
+    uint ShadowIndex;
 };
 
 struct FSpotLightInfo
@@ -67,6 +67,8 @@ struct FSpotLightInfo
     float CosInnerCone;
     float3 Direction;
     float CosOuterCone;
+    uint ShadowIndex;
+    uint3 Padding;
 };
 
 struct FVSInput
@@ -84,6 +86,7 @@ struct FPSInput
     float3 Normal : NORMAL;
     float2 UV : TEXCOORD0;
     float3 WorldPosition : TEXCOORD1;
+    nointerpolation uint ReceiveShadow : TEXCOORD4;
 #if USE_NORMAL_MAP
     float3 Tangent : TANGENT;
     int BitangentSign : BITANGENT_SIGN;
@@ -115,6 +118,8 @@ cbuffer PerObjectConstants : register(b2)
 {
     matrix World;
     matrix NormalMatrix; // World의 역전치
+    uint bReceiveShadow;
+    uint3 ObjectPadding;
 };
 
 cbuffer LightingConstants : register(b3)
@@ -125,7 +130,8 @@ cbuffer LightingConstants : register(b3)
     FSpotLightInfo SpotLights[MAX_SPOT_LIGHTS];
     uint NumPointLights;
     uint NumSpotLights;
-    float2 LightingPadding;
+    uint bReadyForShading;
+    uint NumShadowInfos;
 };
 
 cbuffer TileLightConstants : register(b4)
@@ -144,6 +150,35 @@ StructuredBuffer<FPointLightInfo> StructuredPointLights : register(t8);
 StructuredBuffer<FSpotLightInfo> StructuredSpotLights : register(t9);
 Buffer<uint> TileLightCount : register(t10);
 Buffer<uint> TileLightIndices : register(t11);
+
+// CPU FShadowInfo와 동일한 112-byte StructuredBuffer 항목.
+struct FShadowInfo
+{
+    row_major matrix ViewProjection;
+    float3 LightPosition;
+    float InvRadius;
+    uint ShadowMapIndex;
+    uint LightType;
+    float Bias;
+    float SlopeBias;
+    float MaxSlope;
+    float3 Padding;
+};
+StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
+Texture2DArray<float> ShadowDepth2D : register(t13);
+TextureCubeArray<float> ShadowDepthCube : register(t14);
+SamplerState ShadowSampler : register(s1);
+
+// 각 Light의 조회 구현에서 이 조건을 통과한 경우에만 ShadowInfos를 읽는다.
+// 아직 조회 함수는 연결하지 않는다. 미구현 Light는 CPU에서 InvalidShadowIndex를 유지한다.
+bool CanSampleShadow(uint ShadowIndex, uint ReceiveShadow)
+{
+#if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
+    return bReadyForShading != 0u && ReceiveShadow != 0u && ShadowIndex < NumShadowInfos;
+#else
+    return false;
+#endif
+}
 
 Texture2D AlbedoTexture : register(t0);
 
@@ -369,6 +404,7 @@ FPSInput mainVS(FVSInput Input)
     Output.BitangentSign = Input.Tangent.w;
 #endif
     Output.UV = Input.UV;
+    Output.ReceiveShadow = bReceiveShadow;
 #if GOURAUD
     float3 N = normalize(Output.Normal);
     float3 V = normalize(CameraPosition - Output.WorldPosition);

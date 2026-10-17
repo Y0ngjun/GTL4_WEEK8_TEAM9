@@ -16,8 +16,6 @@ struct FParticleSortInput
 // Viewport가 소유하는 재사용 버퍼. World/Component/Proxy는 소유하지 않는다.
 struct FSceneRenderData
 {
-    // 해당 View에서만 유효한 깊이 준비 결과. 셰이딩 조회의 준비 완료와는 구분한다.
-    bool bShadowDepthReady = false;
     FRenderQueue RenderQueue;
     TArray<FPointLightInfo> PointLights;
     TArray<FSpotLightInfo> SpotLights;
@@ -32,7 +30,6 @@ struct FSceneRenderData
     void ResetFrame()
     {
         ReleaseSceneReferences();
-        bShadowDepthReady = false;
         PointLights.Reset();
         SpotLights.Reset();
         CullingLights.Reset();

@@ -35,6 +35,7 @@ namespace
         constexpr uint32 Texture2DArray = 13;
         constexpr uint32 TextureCubeArray = 14;
     }
+    constexpr uint32 ShadowSamplerSlot = 1;
 
     struct FTileLightShadingConstants
     {
@@ -185,7 +186,7 @@ void FRenderer::UploadPerObjectConstants()
 	for (uint32 Index = 0; Index < Count; ++Index)
 	{
 		FRenderPacket& P = RenderPackets[Index];
-		WriteObjectSlot(Dest, Index, GetPacketWorld(P), GetPacketNormalMatrix(P));
+		WriteObjectSlot(Dest, Index, GetPacketWorld(P), GetPacketNormalMatrix(P), P.Proxy && P.Proxy->ReceivesShadow());
 		P.Slot = Index;
 	}
 
@@ -262,7 +263,7 @@ void FRenderer::DrawStaticGroups(ESceneMeshPass Pass)
 			else
 			{
 				RenderCommand::BindConstantBuffer(2, PerObjectCB.get(), EShaderBindFlagBits::Vertex);
-				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld(), Item.Proxy->GetNormalMatrix());
+				UpdatePerObjectConstants(Item.Proxy->GetLocalToWorld(), Item.Proxy->GetNormalMatrix(), Item.Proxy->ReceivesShadow());
 			}
 			RenderCommand::DrawIndexed(Item.IndexCount, Item.StartIndex);
 		}
@@ -654,15 +655,16 @@ void FRenderer::UpdatePerObjectConstants(const FRenderPacket& RenderPacket, cons
 	// rp.Transform 과 Camera VP 행렬 곱
 	// 행렬곱의 결과 (MVP Matrix) Constant Buffer 업데이트 필요
 
-	UpdatePerObjectConstants(GetPacketWorld(RenderPacket), GetPacketNormalMatrix(RenderPacket));
+	UpdatePerObjectConstants(GetPacketWorld(RenderPacket), GetPacketNormalMatrix(RenderPacket), RenderPacket.Proxy && RenderPacket.Proxy->ReceivesShadow());
 }
 
-void FRenderer::UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix)
+void FRenderer::UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow)
 {
 	FPerObjectConstants Constants;
 
 	Constants.World = World;
 	Constants.NormalMatrix = NormalMatrix;
+	Constants.bReceiveShadow = bReceiveShadow ? 1u : 0u;
 
 	RenderCommand::UpdateBufferData(PerObjectCB.get(), &Constants);
 }
@@ -803,6 +805,8 @@ bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShad
     // 실패/미구현도 이번 프레임에는 재실행하지 않는다. 이전 결과를 ready로 노출하지 않는다.
     Resources.RenderedFrame = FrameNumber;
     Resources.bDepthReady = false;
+    Resources.bReadyForShading = false;
+    Resources.NumShadowInfos = 0;
     if (Frame.ShadowDepthPassInfos.IsEmpty()) return false;
 
     uint32 SliceCount = 0;
@@ -834,5 +838,18 @@ bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShad
         if (!DrawShadowDepth(Request, Pass, DSV, Resolution, Resolution)) return false;
     }
     Resources.bDepthReady = true;
+    // Pass와 조회 정보의 연결 및 Cube 6면 준비는 Light별 준비 코드가 책임진다.
+    Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
     return true;
+}
+
+bool FRenderer::BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported)
+{
+    const FShadowResources* Resources = GetShadowResources(Index);
+    const bool bReady = bSupported && Resources && Resources->RenderedFrame == FrameNumber && Resources->bReadyForShading;
+    RenderCommand::BindShaderResource(ShadowSRVSlots::Infos, bReady ? Resources->ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::Texture2DArray, bReady && Resources->Depth2D ? Resources->Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::TextureCubeArray, bReady && Resources->DepthCube ? Resources->DepthCube->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
+    return bReady;
 }

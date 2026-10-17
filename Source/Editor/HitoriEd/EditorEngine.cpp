@@ -877,23 +877,31 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	FLightingConstants Lighting;
 	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
-	ViewWorld.GetScene().BuildLightingConstants(Lighting);
-	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
 	// 지원 View만 공유 그림자를 요청한다. 비지원 View는 다른 View의 결과를 지우지 않는다.
     const FEditorSettings& ShadowSettings = SettingsPanel->GetSettings();
     const bool bSupportsShadows = View.RenderMode.ViewMode == EViewMode::Lit && View.RenderMode.ShadingModel == EShadingModel::Phong && ShadowSettings.bDrawPrimitives 
 																&& !ShadowSettings.bDepthView && !ShadowSettings.bVisualizeTileLightCount;
-    Data.bShadowDepthReady = false;
+    uint32 ShadowResourceIndex = InvalidShadowResourceIndex;
+    const FShadowFrameData* ShadowFrame = nullptr;
     if (bSupportsShadows)
     {
         if (FWorldContext* Context = GetWorldContextFromWorld(&ViewWorld))
         {
             if (Context->ShadowResourceIndex == InvalidShadowResourceIndex)
                 Context->ShadowResourceIndex = Renderer->AllocateShadowResources(Context->WorldType == EWorldType::Editor);
-            if (const FShadowFrameData* Shadows = SceneRenderer.PrepareWorldShadows(ViewWorld, Context->ShadowResourceIndex))
-                Data.bShadowDepthReady = Renderer->RenderWorldShadows(Context->ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *Shadows);
+            ShadowResourceIndex = Context->ShadowResourceIndex;
+            ShadowFrame = SceneRenderer.PrepareWorldShadows(ViewWorld, ShadowResourceIndex);
+            if (ShadowFrame)
+                Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame);
         }
     }
+    const bool bReadyForShading = Renderer->BindShadowResources(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);
+    // 셰이딩 준비가 성공한 경우에만 기존 요청 배열을 비소유 참조로 전달한다.
+    const TArray<FShadowRequestPerLight>* ShadowRequests = bReadyForShading && ShadowFrame ? &ShadowFrame->ShadowRequestsPerLight : nullptr;
+    ViewWorld.GetScene().BuildLightingConstants(Lighting, ShadowRequests);
+    ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix, ShadowRequests);
+    Lighting.bReadyForShading = bReadyForShading ? 1u : 0u;
+    Lighting.NumShadowInfos = bReadyForShading ? Renderer->GetShadowResources(ShadowResourceIndex)->NumShadowInfos : 0u;
     Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)

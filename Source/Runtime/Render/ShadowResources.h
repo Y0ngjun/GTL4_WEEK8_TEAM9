@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/Types.h"
+#include "ShadowInfo.h"
 #include "Texture2DArray.h"
 #include "TextureCubeArray.h"
 
@@ -14,6 +15,13 @@ struct FShadowResources
 {
     TUniquePtr<FTexture2DArray> Depth2D;
     TUniquePtr<FTextureCubeArray> DepthCube;
+    ComPtr<ID3D11Buffer> ShadowInfoBuffer;
+    ComPtr<ID3D11ShaderResourceView> ShadowInfoSRV;
+    uint32 ShadowInfoCapacity = 0;
+    uint32 NumShadowInfos = 0;
+    bool bReadyForShading = false;
+    bool UploadShadowInfos(const TArray<FShadowInfo>& Infos);
+
     uint64 RenderedFrame = 0;
     bool bDepthReady = false;
 
