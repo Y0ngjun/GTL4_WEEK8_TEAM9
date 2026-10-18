@@ -80,6 +80,8 @@ public:
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
+	// 정렬된 불투명 패킷을 광원 행렬로 깊이만 그린다. 카메라 View 상수(ViewCB)는 건드리지 않는다.
+	void RenderShadowDepth(const FMatrix& LightViewProjection);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -91,7 +93,6 @@ public:
 
 	// RenderOpaque가 보관한 반투명 패킷을 먼 것부터 그린다.
 	void RenderTranslucent(const FMatrix& ViewProjection);
-
 	// 큐를 Material, Opaque, Mesh에 따라 정렬하고 View 상수(b0)를 올린다
 	void RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewProjection, const FVector& CameraPosition);
 
@@ -113,6 +114,8 @@ private:
 	uint32 FirstMaterialIndex = 0;
 	TUniquePtr<FConstantBuffer> PerObjectCB;
 	TUniquePtr<FConstantBuffer> ViewCB;
+	// 그림자 깊이 Pass 전용 b0. 카메라 ViewCB를 덮어쓰지 않도록 따로 둔다.
+	TUniquePtr<FConstantBuffer> ShadowViewCB;
 	TUniquePtr<FConstantBuffer> LightingCB;
 	TUniquePtr<FConstantBuffer> TileShadingCB;
 	FShaderProgram* DepthShader = nullptr;
@@ -136,8 +139,9 @@ private:
 	FLocalLight LocalLight;
 	FTileLightCulling TileLightCulling;
 
-	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color);
-	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
+	// InViewCB가 nullptr이면 카메라 ViewCB를 b0에 묶는다.
+	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color, FConstantBuffer* InViewCB = nullptr);
+	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color, FConstantBuffer* InViewCB = nullptr);
 	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
 
 	// 이번 프레임 스태틱 메시 묶음 (정렬 키 순). 비어 있지 않은 것만 담는다.

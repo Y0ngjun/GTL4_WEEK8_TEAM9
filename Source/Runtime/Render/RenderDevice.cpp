@@ -199,6 +199,15 @@ void FRenderDevice::CreateStates()
 		Desc.FillMode = D3D11_FILL_WIREFRAME;
 		Desc.CullMode = D3D11_CULL_NONE;
 		Device->CreateRasterizerState(&Desc, RasterizerStates[(uint8)ERasterizerState::Wireframe].GetAddressOf());
+
+		// 그림자 깊이: 자기 표면을 가리는 줄무늬를 bias로 막고, near 앞 caster는 잘라내지 않고 깊이 0으로 눌러 남긴다.
+		Desc.FillMode = D3D11_FILL_SOLID;
+		Desc.CullMode = D3D11_CULL_BACK;
+		Desc.DepthBias = 1500;
+		Desc.SlopeScaledDepthBias = 2.0f;
+		Desc.DepthBiasClamp = 0.0f;
+		Desc.DepthClipEnable = FALSE;
+		Device->CreateRasterizerState(&Desc, RasterizerStates[(uint8)ERasterizerState::ShadowDepth].GetAddressOf());
 	}
 
 	// ---------- DepthStencil ----------

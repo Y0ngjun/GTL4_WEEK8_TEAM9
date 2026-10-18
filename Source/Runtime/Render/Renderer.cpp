@@ -89,6 +89,7 @@ bool FRenderer::Init()
 	bUsePerObjectSlots = RenderCommand::SupportsConstantBufferOffsets();
 	PerObjectCB = RenderCommand::CreateConstantBuffer(sizeof(FPerObjectConstants));
 	ViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
+	ShadowViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
 	LightingCB = RenderCommand::CreateConstantBuffer(sizeof(FLightingConstants));
 	FLightingConstants LightingConstant{};
 	RenderCommand::UpdateBufferData(LightingCB.get(), &LightingConstant);
@@ -201,6 +202,16 @@ void FRenderer::RenderDepthPrepass(const FMatrix& ViewProjection)
     DrawPackets(0, FirstTranslucentIndex, ViewProjection, ESceneMeshPass::DepthPrepass);
 }
 
+void FRenderer::RenderShadowDepth(const FMatrix& LightViewProjection)
+{
+    FViewConstants ShadowView;
+    ShadowView.ViewProjection = LightViewProjection;
+    RenderCommand::UpdateBufferData(ShadowViewCB.get(), &ShadowView);
+    // 깊이 Pass와 같은 패킷 오브젝트 칸을 쓰고 b0만 광원 행렬로 바꾼다.
+    DrawStaticGroups(ESceneMeshPass::DepthPrepass, ShadowViewCB.get());
+    DrawPackets(0, FirstTranslucentIndex, LightViewProjection, ESceneMeshPass::DepthPrepass, ShadowViewCB.get());
+}
+
 // RenderOpaque가 남긴 반투명 패킷을 먼 것부터 그린다.
 void FRenderer::RenderTranslucent(const FMatrix& ViewProjection)
 {
@@ -211,14 +222,14 @@ void FRenderer::RenderTranslucent(const FMatrix& ViewProjection)
 }
 
 // 스태틱 메시 묶음을 정렬 키 순서로 그린다. 바인딩은 묶음마다 한 번, 항목마다는 칸 바인딩과 드로우만 한다.
-void FRenderer::DrawStaticGroups(ESceneMeshPass Pass)
+void FRenderer::DrawStaticGroups(ESceneMeshPass Pass, FConstantBuffer* InViewCB)
 {
 	if (StaticGroups.empty())
 		return;
 
 	SCOPE_CYCLE_COUNTER(STAT_DrawRenderPackets);
 	// 픽셀 단위 조명이 카메라 위치를 읽으므로 PS에도 바인딩한다.
-	RenderCommand::BindConstantBuffer(0, ViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+	RenderCommand::BindConstantBuffer(0, InViewCB ? InViewCB : ViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(3, LightingCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
 	UMaterial* BoundMaterial = nullptr;
@@ -298,7 +309,7 @@ void FRenderer::RenderQueueSorting(FRenderQueue& InQueue, const FMatrix& ViewPro
 }
 
 // 정렬된 패킷 중 [Begin, End) 범위를 View 행렬과 Section 범위로 그린다.
-void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass)
+void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass, FConstantBuffer* InViewCB)
 {
 	SCOPE_CYCLE_COUNTER(STAT_DrawRenderPackets);
 
@@ -306,7 +317,7 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 	LastMaterial = nullptr;
 	uint8 LastLODIndex = 0;
 
-	RenderCommand::BindConstantBuffer(0, ViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+	RenderCommand::BindConstantBuffer(0, InViewCB ? InViewCB : ViewCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 	RenderCommand::BindConstantBuffer(3, LightingCB.get(), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 
 
