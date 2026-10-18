@@ -108,7 +108,7 @@ private:
 	//Directional Light 기준 깊이 Pass. 렌더 큐 정렬 뒤에 호출한다.
 	void RenderShadowPass(FViewport& Viewport, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight);
 	//불투명 물체에 대한 Pass
-	void RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight);
+	void RenderOpaquePass(FViewport& Viewport, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight);
 	//안개에 대한 Pass
 	void RenderFogPass(UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation,const FMatrix& ViewProjection, FRenderQueue& RenderQueue);
 	//Overlay Pass

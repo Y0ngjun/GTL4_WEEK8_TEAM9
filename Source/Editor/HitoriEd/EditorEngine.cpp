@@ -736,7 +736,7 @@ void UEditorEngine::RenderShadowPass(FViewport& Viewport, UWorld& ViewWorld, con
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
 // 렌더 큐 정렬은 RenderFrame이 이 Pass 전에 마친다.
-void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight)
+void UEditorEngine::RenderOpaquePass(FViewport& Viewport, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight)
 {
 	const FMatrix& ViewProjection = View.ViewProjection;
 	const FVector ViewCameraLocation = View.GetCameraLocation();
@@ -777,6 +777,9 @@ void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& 
 	// 2) 광원 VP → b5 (같은 VP로 픽셀을 변환해야 같은 칸, 같은 기준의 depth와 비교됨)
 	Renderer->SetDirectionalShadow(Data.DirectionalShadow);
 
+	// 3) Spot 깊이 배열 → t13. Spot별 VP와 slice는 t9의 FSpotLightInfo에 실려 간다.
+	RenderCommand::BindShaderResource(13, ViewWorld.GetScene().SpotLightShadowMaps.GetSRV(), EShaderBindFlagBits::Pixel);
+
 	RenderCommand::BeginRenderPass(PassInfo);
 
 	const ERasterizerState SceneRasterizerState = ViewRenderMode.ViewMode == EViewMode::Wireframe
@@ -812,7 +815,8 @@ void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& 
 	RenderCommand::EndRenderPass(PassInfo);
     RenderCommand::UnbindShaderResources(8, 4, EShaderBindFlagBits::Pixel);
     RenderCommand::UnbindShaderResources(8, 2, EShaderBindFlagBits::Vertex);
-	RenderCommand::UnbindShaderResources(12, 1, EShaderBindFlagBits::Pixel);
+	// 다음 프레임 그림자 Pass가 같은 텍스처를 DSV로 쓰기 전에 t12(Directional)·t13(Spot)을 푼다.
+	RenderCommand::UnbindShaderResources(12, 2, EShaderBindFlagBits::Pixel);
 }
 
 void UEditorEngine::RenderFogPass(UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation, const FMatrix& ViewProjection, FRenderQueue& RenderQueue)
@@ -1101,7 +1105,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 		RenderShadowPass(Viewport, ViewWorld, SceneRenderingInfo, View, Lighting.Directional);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
-	RenderOpaquePass(Viewport, SceneRenderingInfo, View, Lighting.Directional);
+	RenderOpaquePass(Viewport, ViewWorld, SceneRenderingInfo, View, Lighting.Directional);
 
 	if (SettingsPanel->GetSettings().bDepthView)
 	{

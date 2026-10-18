@@ -67,6 +67,10 @@ struct FSpotLightInfo
     float CosInnerCone;
     float3 Direction;
     float CosOuterCone;
+   
+    matrix ShadowViewProj;
+    int ShadowSlot;
+    float3 SpotShadowPadding;
 };
 
 struct FVSInput
@@ -159,6 +163,8 @@ Texture2D NormalTexture : register(t1);
 #endif
 
 Texture2D DirectionalLightShadowMap : register(t12);
+// Spot마다 slice 한 장. FSpotLightInfo::ShadowSlot으로 고른다.
+Texture2DArray SpotShadowMaps : register(t13);
 
 SamplerState AlbedoSampler : register(s0);
 
@@ -298,6 +304,28 @@ float ComputeDirectionalShadow(float3 WorldPosition)
     return LightNDC.z <= StoredDepth ? 1.0f : 0.0f;
 }
 
+float ComputeSpotShadow(FSpotLightInfo Light, float3 WorldPosition)
+{
+    if (Light.ShadowSlot < 0)
+        return 1.0f;
+
+    // 기록할 때와 같은 원근 VP. 원근이라 w로 나눠야 NDC가 된다.
+    float4 LightClip = mul(float4(WorldPosition, 1.0f), Light.ShadowViewProj);
+    if (LightClip.w <= 0.0f)
+        return 1.0f; // 광원 뒤쪽
+    float3 LightNDC = LightClip.xyz / LightClip.w;
+
+    float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (any(UV < 0.0f) || any(UV >= 1.0f) || LightNDC.z > 1.0f)
+        return 1.0f; // 원뿔 밖은 그림자 없음
+
+    uint Width, Height, Slices;
+    SpotShadowMaps.GetDimensions(Width, Height, Slices);
+    int2 Texel = int2(UV * float2(Width, Height));
+    float StoredDepth = SpotShadowMaps.Load(int4(Texel, Light.ShadowSlot, 0)).r;
+    return LightNDC.z <= StoredDepth ? 1.0f : 0.0f;
+}
+
 void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition, out float3 DiffuseLight, out float3 SpecularLight)
 {
     DiffuseLight = 0.0f;
@@ -381,7 +409,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
 
-            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor;
+            float Shadow = ComputeSpotShadow(Light, WorldPosition);
+            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
         }

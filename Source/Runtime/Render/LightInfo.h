@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Math/Vector.h"
+#include "Math/Matrix.h"
 
 // UberLit.hlsl의 MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS
 constexpr uint32 MaxPointLights = 4;
@@ -37,6 +38,10 @@ struct FSpotLightInfo
 	float CosInnerCone = 1.0f;
 	FVector Direction;
 	float CosOuterCone = 1.0f;
+	// 그림자: 이 Spot 시점의 원근 VP와 FSpotShadowMapArray slice 번호. -1이면 그림자 없음.
+	FMatrix ShadowViewProj;
+	int32 ShadowSlot = -1;
+	float ShadowPadding[3] = {};
 };
 
 struct FLightingConstants
@@ -53,5 +58,5 @@ struct FLightingConstants
 static_assert(sizeof(FAmbientLightInfo) == 16);
 static_assert(sizeof(FDirectionalLightInfo) == 32);
 static_assert(sizeof(FPointLightInfo) == 32);
-static_assert(sizeof(FSpotLightInfo) == 48);
-static_assert(sizeof(FLightingConstants) == 384);
+static_assert(sizeof(FSpotLightInfo) == 128);
+static_assert(sizeof(FLightingConstants) == 704);

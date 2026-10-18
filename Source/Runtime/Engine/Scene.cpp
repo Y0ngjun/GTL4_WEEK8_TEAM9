@@ -320,7 +320,11 @@ void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray
             else
             {
                 const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);
-                OutSpotLight.Add(Spot->GetInfo());
+                // 셰이더가 같은 VP와 slice로 그림자를 읽도록 프록시의 그림자 정보를 함께 싣는다.
+                FSpotLightInfo Info = Spot->GetInfo();
+                Info.ShadowViewProj = Spot->GetShadowViewProj();
+                Info.ShadowSlot = Spot->GetShadowSlot();
+                OutSpotLight.Add(Info);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Spot->GetCullingSphereCenter()), Spot->GetCullingSphereRadius()});
             }
         }
