@@ -13,6 +13,8 @@
 
 constexpr uint32 ObjectSlotBytes = 256;
 
+struct FDirectionalShadowView;
+
 struct FPerObjectConstants
 {
 	FMatrix World;
@@ -82,6 +84,7 @@ public:
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
 	// 정렬된 불투명 패킷을 광원 행렬로 깊이만 그린다. 카메라 View 상수(ViewCB)는 건드리지 않는다.
 	void RenderShadowDepth(const FMatrix& LightViewProjection);
+	void SetDirectionalShadow(const FDirectionalShadowView& DirectionalShadowView);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -118,6 +121,8 @@ private:
 	TUniquePtr<FConstantBuffer> ShadowViewCB;
 	TUniquePtr<FConstantBuffer> LightingCB;
 	TUniquePtr<FConstantBuffer> TileShadingCB;
+	TUniquePtr<FConstantBuffer> DirectionalShadowCB;
+
 	FShaderProgram* DepthShader = nullptr;
 
 	// 모든 패킷의 World 행렬을 256바이트 칸에 한 번에 올린 버퍼. D3D11.1 오프셋 바인딩을 못 쓰면 PerObjectCB로 돌아간다.

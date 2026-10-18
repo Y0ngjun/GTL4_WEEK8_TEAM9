@@ -732,6 +732,17 @@ void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& 
 	const float ClearValue = ColorWorkflow::bLinear ? FLinearColor::SRGBToLinear(0.3f) : 0.3f;
 	PassInfo.ColorRenderTargets[0].ClearValue.ColorClearValue = FVector4(ClearValue, ClearValue, ClearValue, 1.0f);
     if (bDepthPrepass) PassInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
+
+	// RenderOpaquePass, 메인 BeginRenderPass 전
+	const FSceneRenderData& Data = Viewport.GetSceneRenderData();
+	FTexture2D* ShadowMap = Data.DirectionalShadow.bValid ? Viewport.GetDirectionalShadowMap() : nullptr;
+
+	// 1) 깊이 텍스처 → t12 (PS에서 읽음)
+	RenderCommand::BindShaderResource(12, ShadowMap, EShaderBindFlagBits::Pixel);
+
+	// 2) 광원 VP → b5 (같은 VP로 픽셀을 변환해야 같은 칸, 같은 기준의 depth와 비교됨)
+	Renderer->SetDirectionalShadow(Data.DirectionalShadow);
+
 	RenderCommand::BeginRenderPass(PassInfo);
 
 	const ERasterizerState SceneRasterizerState = ViewRenderMode.ViewMode == EViewMode::Wireframe
@@ -767,6 +778,7 @@ void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& 
 	RenderCommand::EndRenderPass(PassInfo);
     RenderCommand::UnbindShaderResources(8, 4, EShaderBindFlagBits::Pixel);
     RenderCommand::UnbindShaderResources(8, 2, EShaderBindFlagBits::Vertex);
+	RenderCommand::UnbindShaderResources(12, 1, EShaderBindFlagBits::Pixel);
 }
 
 void UEditorEngine::RenderFogPass(UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FVector& ViewCameraLocation, const FMatrix& ViewProjection, FRenderQueue& RenderQueue)

@@ -140,6 +140,13 @@ cbuffer TileLightConstants : register(b4)
     uint bUseTileList;
 };
 
+cbuffer DirectionalShadowConstants : register(b5)
+{
+    matrix LightViewProj;
+    uint bHasDirectionalShadow;
+    float3 ShadowPadding;
+};
+
 StructuredBuffer<FPointLightInfo> StructuredPointLights : register(t8);
 StructuredBuffer<FSpotLightInfo> StructuredSpotLights : register(t9);
 Buffer<uint> TileLightCount : register(t10);
@@ -150,6 +157,8 @@ Texture2D AlbedoTexture : register(t0);
 #if USE_NORMAL_MAP
 Texture2D NormalTexture : register(t1);
 #endif
+
+Texture2D DirectionalLightShadowMap : register(t12);
 
 SamplerState AlbedoSampler : register(s0);
 
@@ -265,6 +274,29 @@ void ComputeLighting(float3 N, float3 WorldPosition, float3 V, float n, out floa
     }
 }
 
+float ComputeDirectionalShadow(float3 WorldPosition)
+{
+    if (bHasDirectionalShadow == 0)
+        return 1.0f;
+
+    // 1. 기록할 때와 같은 VP로 광원 clip 공간으로 (VS의 mul 순서와 동일)
+    float4 LightClip = mul(float4(WorldPosition, 1.0f), LightViewProj);
+    float3 LightNDC = LightClip.xyz / LightClip.w; // 직교라 w = 1이지만 습관적으로
+
+    // 2. NDC(-1~1) → 텍스처 UV(0~1). 텍스처는 y가 아래로 증가하므로 뒤집는다
+    float2 UV = LightNDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (any(UV < 0.0f) || any(UV > 1.0f) || LightNDC.z > 1.0f)
+        return 1.0f; // 박스 밖은 그림자 없음
+
+    // 3. 그 칸에 기록된 depth(가장 가까운 caster)를 읽는다
+    uint Width, Height;
+    DirectionalLightShadowMap.GetDimensions(Width, Height);
+    int2 Texel = int2(UV * float2(Width, Height));
+    float StoredDepth = DirectionalLightShadowMap.Load(int3(Texel, 0)).r;
+
+    // 4. 내 depth가 더 멀면 무언가에 가려진 것
+    return LightNDC.z <= StoredDepth ? 1.0f : 0.0f;
+}
 
 void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition, out float3 DiffuseLight, out float3 SpecularLight)
 {
@@ -280,7 +312,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #else
         float GeoFactor = 1.0f;
 #endif
-        AccumulateLight(Il * GeoFactor, N, L, V, n, DiffuseLight, SpecularLight);
+        float Shadow = ComputeDirectionalShadow(WorldPosition);
+        AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }
 
     // Opaque 깊이 기반 타일 목록은 반투명에 필요한 라이트를 누락할 수 있어
@@ -381,6 +414,7 @@ FPSInput mainVS(FVSInput Input)
 
 float4 mainPS(FPSInput Input) : SV_TARGET
 {
+       
     float4 FinalColor = float4(0.0f, 0.0f, 0.0f, 1.0f);
 
     float4 TextureColor = AlbedoTexture.Sample(AlbedoSampler, Input.UV + UVScrollOffset);
@@ -447,5 +481,6 @@ float4 mainPS(FPSInput Input) : SV_TARGET
 #endif
     FinalColor = float4(Ka * AmbientLight.Color + Kd * DiffuseLight + Ks * SpecularLight, Alpha);
 #endif
+    
     return FinalColor;
 }

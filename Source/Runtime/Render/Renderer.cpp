@@ -14,6 +14,7 @@
 #include "TileLightCullingResources.h"
 
 #include "Camera/CameraComponent.h"
+#include "SceneRenderData.h"
 
 #include <algorithm>
 #include <chrono>
@@ -39,6 +40,14 @@ namespace
     };
     static_assert(sizeof(FTileLightShadingConstants) == 32);
     static_assert(offsetof(FTileLightShadingConstants, PointCount) == 16);
+
+	struct FDirectionalShadowConstants
+	{
+		FMatrix LightViewProj;
+		uint32 bHasShadow = 0;
+		uint32 Padding[3] = {};
+	};
+	static_assert(sizeof(FDirectionalShadowConstants) == 80, "UberLit.hlsl b5 레이아웃(matrix + uint + float3)과 같아야 한다");
 
 	// VSSetConstantBuffers1의 오프셋은 16개 상수(256바이트) 단위여야 하므로 오브젝트마다 256바이트 칸을 쓴다.
 	constexpr uint32 PerObjectSlotConstants = 16;
@@ -91,6 +100,7 @@ bool FRenderer::Init()
 	ViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
 	ShadowViewCB = RenderCommand::CreateConstantBuffer(sizeof(FViewConstants));
 	LightingCB = RenderCommand::CreateConstantBuffer(sizeof(FLightingConstants));
+	DirectionalShadowCB = RenderCommand::CreateConstantBuffer(sizeof(FDirectionalShadowConstants));
 	FLightingConstants LightingConstant{};
 	RenderCommand::UpdateBufferData(LightingCB.get(), &LightingConstant);
 
@@ -210,6 +220,16 @@ void FRenderer::RenderShadowDepth(const FMatrix& LightViewProjection)
     // 깊이 Pass와 같은 패킷 오브젝트 칸을 쓰고 b0만 광원 행렬로 바꾼다.
     DrawStaticGroups(ESceneMeshPass::DepthPrepass, ShadowViewCB.get());
     DrawPackets(0, FirstTranslucentIndex, LightViewProjection, ESceneMeshPass::DepthPrepass, ShadowViewCB.get());
+}
+
+void FRenderer::SetDirectionalShadow(const FDirectionalShadowView& Data)
+{
+	// CPU 쪽 구조체는 bool이라 b5 레이아웃과 크기가 다르므로 GPU용 상수로 옮겨 담는다.
+	FDirectionalShadowConstants Constants{};
+	Constants.LightViewProj = Data.LightViewProj;
+	Constants.bHasShadow = Data.bValid ? 1u : 0u;
+	RenderCommand::UpdateBufferData(DirectionalShadowCB.get(), &Constants);                              // 내용 채우기
+	RenderCommand::BindConstantBuffer(5, DirectionalShadowCB.get(), EShaderBindFlagBits::Pixel);         // 슬롯에 꽂기
 }
 
 // RenderOpaque가 남긴 반투명 패킷을 먼 것부터 그린다.
