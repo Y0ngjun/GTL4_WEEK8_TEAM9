@@ -9,6 +9,7 @@
 #include "Render/LightInfo.h"
 #include "Render/Renderer.h"
 #include "Render/SpotLightShadowMapArray.h"
+#include "Render/PointLightShadowMapArray.h"
 
 class FLightSceneProxy;
 class ULightComponentBase;
@@ -66,6 +67,7 @@ public:
 	bool bLightColorsLinear = true;
 	
 	FSpotLightShadowMapArray SpotLightShadowMaps;
+	FPointLightShadowMapArray PointLightShadowMaps;
 
 	// 컬링 결과로 프록시를 바로 내보내 컴포넌트를 역참조하지 않는다. 경계는 Build/Refit 때만 계산한다.
 	TBVH<FPrimitiveSceneProxy*> BVH{

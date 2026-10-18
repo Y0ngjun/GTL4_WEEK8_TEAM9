@@ -81,12 +81,62 @@ public:
 		const UPointLightComponent* Light = static_cast<const UPointLightComponent*>(Component);
 		Info = Light->GetPointLightInfo();
 		bVisible = Light->IsLightVisible();
+
+		// 큐브 6면: 광원 위치에서 90° 원근으로 각 축을 본다. 면 순서와 Up은 D3D 큐브맵 규약
+		// (+X −X +Y −Y +Z −Z)을 월드 축에 그대로 적용해야 GPU가 방향 벡터로 고른 면과 일치한다.
+		static const FVector FaceForward[6] = {
+			FVector( 1.0f, 0.0f, 0.0f), FVector(-1.0f, 0.0f, 0.0f),
+			FVector( 0.0f, 1.0f, 0.0f), FVector( 0.0f,-1.0f, 0.0f),
+			FVector( 0.0f, 0.0f, 1.0f), FVector( 0.0f, 0.0f,-1.0f) };
+		static const FVector FaceUp[6] = {
+			FVector( 0.0f, 1.0f, 0.0f), FVector( 0.0f, 1.0f, 0.0f),
+			FVector( 0.0f, 0.0f,-1.0f), FVector( 0.0f, 0.0f, 1.0f),
+			FVector( 0.0f, 1.0f, 0.0f), FVector( 0.0f, 1.0f, 0.0f) };
+
+		const float NearZ = 0.1f;
+		const float FarZ = std::max(Info.AttenuationRadius, NearZ + 0.01f);
+		ShadowZScale = FarZ / (FarZ - NearZ);
+		ShadowZOffset = -NearZ * FarZ / (FarZ - NearZ);
+		// FCameraProjection 원근과 같은 배치(+X 깊이). FOV 90°라 tan(45°) = 1, 정사각형이라 배율 1
+		const FMatrix Projection(
+			0.0f, 0.0f, ShadowZScale, 1.0f,
+			1.0f, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, ShadowZOffset, 0.0f);
+
+		for (int32 Face = 0; Face < 6; ++Face)
+		{
+			const FVector& Forward = FaceForward[Face];
+			const FVector& Up = FaceUp[Face];
+			// 카메라와 같은 규약(Right = Up × Forward). D3D LookAtLH와 같아 큐브 면의 u/v 방향이 맞는다.
+			const FVector Right = FVector::Cross(Up, Forward);
+
+			FMatrix Rotation = FMatrix::Identity;
+			Rotation.M[0][0] = Forward.X; Rotation.M[0][1] = Forward.Y; Rotation.M[0][2] = Forward.Z;
+			Rotation.M[1][0] = Right.X;   Rotation.M[1][1] = Right.Y;   Rotation.M[1][2] = Right.Z;
+			Rotation.M[2][0] = Up.X;      Rotation.M[2][1] = Up.Y;      Rotation.M[2][2] = Up.Z;
+			const FMatrix View = FMatrix::MakeTranslation(-Info.Position) * Rotation.GetTransposed();
+			FaceViewProj[Face] = View * Projection;
+		}
 	}
 
 	const FPointLightInfo& GetInfo() const { return Info; }
+	// FScene이 AllocateSlot/FreeSlot에 넘겨 slot을 바꿀 때 쓴다.
+	int32& GetShadowSlot() { return ShadowSlot; }
+	// 렌더 코드는 읽기만 한다. -1이면 그림자 큐브가 없다.
+	int32 GetShadowSlot() const { return ShadowSlot; }
+	const FMatrix& GetFaceViewProj(int32 Face) const { return FaceViewProj[Face]; }
+	float GetShadowZScale() const { return ShadowZScale; }
+	float GetShadowZOffset() const { return ShadowZOffset; }
 
 private:
 	FPointLightInfo Info;
+
+	// FPointLightShadowMapArray에 할당된 큐브 번호
+	int32 ShadowSlot = -1;
+	FMatrix FaceViewProj[6];
+	float ShadowZScale = 1.0f;
+	float ShadowZOffset = 0.0f;
 };
 
 class FSpotLightSceneProxy final : public FLightSceneProxy

@@ -728,7 +728,31 @@ void UEditorEngine::RenderShadowPass(FViewport& Viewport, UWorld& ViewWorld, con
 		// b0만 이 Spot의 원근 VP로 바꿔 그린다
 		Renderer->RenderShadowDepth(Spot->GetShadowViewProj());
 	}
-	// 메인 패스에서 SRV(t13)로 읽기 전에 DSV를 풀어 둔다
+
+	//Point Light Shadow Map Pass: Point마다 큐브 6면을 면별 VP로 한 장씩 그린다
+	FPointLightShadowMapArray& PointMaps = Scene.PointLightShadowMaps;
+	const uint32 PointShadowMapSize = PointMaps.GetResolution();
+	for (FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		if (Proxy->GetLightType() != ELightType::Point || !Proxy->IsVisible())
+			continue;
+		const FPointLightSceneProxy* Point = static_cast<const FPointLightSceneProxy*>(Proxy);
+		if (Point->GetShadowSlot() < 0)
+			continue;   // 큐브가 없으면(배열이 가득 참) 그림자 없이 비춘다
+
+		for (uint32 Face = 0; Face < 6; ++Face)
+		{
+			ID3D11DepthStencilView* FaceDSV = PointMaps.GetFaceDSV(Point->GetShadowSlot(), Face);
+			if (!FaceDSV)
+				continue;
+			Context->ClearDepthStencilView(FaceDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+			Context->OMSetRenderTargets(0, nullptr, FaceDSV);
+			RenderCommand::SetViewport(0, 0, PointShadowMapSize, PointShadowMapSize);
+			Renderer->RenderShadowDepth(Point->GetFaceViewProj(static_cast<int32>(Face)));
+		}
+	}
+
+	// 메인 패스에서 SRV(t13, t14)로 읽기 전에 DSV를 풀어 둔다
 	Context->OMSetRenderTargets(0, nullptr, nullptr);
 
 

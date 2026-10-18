@@ -5,6 +5,9 @@
 
 constexpr uint32 MaxSpotShadows = 4;
 constexpr uint32 SpotShadowResolution = 1024;
+// Point는 광원마다 6면을 그리므로 개수와 해상도를 Spot보다 낮게 잡는다.
+constexpr uint32 MaxPointShadows = 4;
+constexpr uint32 PointShadowResolution = 512;
 
 void FScene::AddPrimitive(UPrimitiveComponent* Component)
 {
@@ -131,6 +134,11 @@ void FScene::AddLight(ULightComponentBase* Component)
 		SpotLightShadowMaps.Ensure(MaxSpotShadows, SpotShadowResolution);
 		SpotLightShadowMaps.AllocateSlot(static_cast<FSpotLightSceneProxy*>(Proxy)->GetShadowSlot());
 	}
+	else if (Proxy->GetLightType() == ELightType::Point)
+	{
+		PointLightShadowMaps.Ensure(MaxPointShadows, PointShadowResolution);
+		PointLightShadowMaps.AllocateSlot(static_cast<FPointLightSceneProxy*>(Proxy)->GetShadowSlot());
+	}
 
 	Proxy->Scene = this;
 	Component->SceneProxy = Proxy;
@@ -157,6 +165,8 @@ void FScene::RemoveLight(ULightComponentBase* Component)
 
 	if (Proxy->GetLightType() == ELightType::Spot)
 		SpotLightShadowMaps.FreeSlot(static_cast<FSpotLightSceneProxy*>(Proxy)->GetShadowSlot());
+	else if (Proxy->GetLightType() == ELightType::Point)
+		PointLightShadowMaps.FreeSlot(static_cast<FPointLightSceneProxy*>(Proxy)->GetShadowSlot());
 	Component->SceneProxy = nullptr;
 	delete Proxy;
 }
@@ -171,6 +181,7 @@ void FScene::RemoveAllLights()
 	Lights.Reset();
 	DirtyLights.Reset();
 	SpotLightShadowMaps.Reset();
+	PointLightShadowMaps.Reset();
 }
 
 void FScene::MarkLightDirty(FLightSceneProxy* Proxy)
