@@ -210,33 +210,52 @@ void FRenderer::RenderDepthPrepass(const FMatrix& ViewProjection)
 
 // light space 행렬을 ViewCB에 전달
 // 광원 하나의 Shadow Map에 caster들의 깊이를 기록한다.
-void FRenderer::RenderShadowDepth(const FLightShadowData& Shadow)
+bool FRenderer::RenderShadowDepth(const FLightShadowData& Shadow, uint32 ViewIndex)
 {
-	// 현재는 단일 2D Shadow Map만 지원한다.
-	// Point의 Cube 렌더링은 이후 별도로 확장한다.
-	if (!Shadow.Settings.bCastShadows || Shadow.MapDesc.Type != EShadowMapType::Texture2D ||  
-		Shadow.MapDesc.SliceCount != 1 ||
-		Shadow.Views.Num() != 1)
+	const bool bPoint = Shadow.Type == EShadowProjection::Point;
+
+	// Point는 6개 View, Directional / Spot은 1개 View를 사용한다.
+	const uint32 ViewCount = bPoint ? 6u : 1u;
+
+	const EShadowMapType MapType = bPoint
+		? EShadowMapType::TextureCube
+		: EShadowMapType::Texture2D;
+
+	if (!Shadow.Settings.bCastShadows || Shadow.MapDesc.Type != MapType ||
+		Shadow.MapDesc.SliceCount != ViewCount ||
+		Shadow.Views.Num() != ViewCount || ViewIndex >= ViewCount )
 	{
-		return;
+		return false;
 	}
 
-	const FShadowView& ShadowView = Shadow.Views[0];
+	const FShadowView& ShadowView = Shadow.Views[ViewIndex];
+	FTexture2D* ShadowMap = nullptr;
+	uint32 ShadowMapSlot = 0;
+	if (Shadow.Type == EShadowProjection::Directional && ShadowView.TargetSlice == 0)
+	{
+		ShadowMap = EnsureShadowMap2D(Shadow.LightId, Shadow.MapDesc);
+		ShadowMapSlot = 12;
+	}
+	else if (Shadow.Type == EShadowProjection::Spot)
+	{
+		ShadowMap = SpotShadowMap.get();
+		ShadowMapSlot = 13;
+	}
+	else if (bPoint)
+	{
+		ShadowMap = PointShadowMap.get();
 
-	// 단일 2D 텍스처이므로 출력 면은 0이어야 한다.
-	if (ShadowView.TargetSlice != 0)
-		return;
+		// 이후 Point 그림자를 읽을 PS 텍스처 슬롯으로 사용한다.
+		ShadowMapSlot = 14;
+	}
 
-	// 기존 자원이 맞으면 재사용하고, 없거나 해상도가 다르면 생성한다.
-	// 소유권은 ShadowMaps2D에 있고, 여기서는 포인터만 빌려 사용한다.
-	FTexture2D* ShadowMap = EnsureShadowMap2D(Shadow.LightId, Shadow.MapDesc);
+	if (!ShadowMap ||
+		!ShadowMap->GetDSV(ShadowView.TargetSlice) ||
+		ShadowMap->GetWidth() != Shadow.MapDesc.Resolution)
+	{
+		return false;
+	}
 
-	if (!ShadowMap)
-		return;
-
-	// 이후 Uber Shader의 directional Shadow Map 조회 슬롯을 t12로 사용한다.
-	// 이전 렌더링에서 읽던 SRV를 해제한 뒤 깊이 출력 대상으로 연결한다.
-	constexpr uint32 ShadowMapSlot = 12;
 	RenderCommand::UnbindShaderResource(ShadowMapSlot, EShaderBindFlagBits::Pixel);
 
 	// 색상 출력 없이 깊이 텍스처만 사용하는 패스를 구성한다.
@@ -249,6 +268,7 @@ void FRenderer::RenderShadowDepth(const FLightShadowData& Shadow)
 	// 깊이는 가장 먼 값인 1로 초기화한다.
 	// 이후 더 가까운 caster의 깊이가 기록된다.
 	ShadowPassInfo.DepthStencil.Texture = ShadowMap;
+	ShadowPassInfo.DepthStencil.ArraySlice = ShadowView.TargetSlice;
 	ShadowPassInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Clear;
 	ShadowPassInfo.DepthStencil.StoreOp = ERenderTargetStoreOp::Store;
 	ShadowPassInfo.DepthStencil.ClearValue.DepthClearValue = 1.0f;
@@ -272,6 +292,193 @@ void FRenderer::RenderShadowDepth(const FLightShadowData& Shadow)
 
 	// DSV 연결을 해제해서 이후 셰이더에서 깊이를 읽을 수 있게 한다.
 	RenderCommand::EndRenderPass(ShadowPassInfo);
+	return true;
+}
+
+FTexture2D* FRenderer::EnsureSpotShadowArray(uint32 SliceCount)
+{
+	if (SliceCount == 0 || SliceCount > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION)
+		return nullptr;
+
+	if (SpotShadowMap && SpotShadowMap->GetWidth() == SpotShadowResolution &&
+		SpotShadowMap->GetArraySize() >= SliceCount)
+	{
+		return SpotShadowMap.get();
+	}
+
+	// 감소한 광원 수 때문에 재할당하지 않고, 해상도 변경은 반영한다.
+	const uint32 Capacity = SpotShadowMap
+		? std::max(SliceCount, SpotShadowMap->GetArraySize()) : SliceCount;
+	auto NewMap = FTexture2D::CreateDepthArray(RenderCommand::GetDevice(), SpotShadowResolution, Capacity);
+	if (!NewMap)
+	{
+		HTR_LOG(Error, "[Shadow] Spot depth array creation failed ({} x {}, {} slices)",
+			SpotShadowResolution, SpotShadowResolution, Capacity);
+		return nullptr;
+	}
+	SpotShadowMap = std::move(NewMap);
+	return SpotShadowMap.get();
+}
+
+FTexture2D* FRenderer::EnsurePointShadowArray(uint32 CubeCount)
+{
+	// 곱하기 전에 검사해서 API 한도를 넘는 요청을 막는다.
+	if (CubeCount == 0 ||
+		CubeCount > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION / 6u)
+	{
+		return nullptr;
+	}
+
+	const uint32 RequiredSlices = CubeCount * 6u;
+
+	// 해상도와 용량이 충분하면 그대로 사용한다.
+	if (PointShadowMap &&
+		PointShadowMap->GetWidth() == PointShadowResolution &&
+		PointShadowMap->GetArraySize() >= RequiredSlices)
+	{
+		return PointShadowMap.get();
+	}
+
+	// 광원 수 감소만으로 배열을 다시 만들지는 않는다.
+	const uint32 Capacity = PointShadowMap 
+		? std::max(RequiredSlices, PointShadowMap->GetArraySize()) 
+		: RequiredSlices;
+
+	auto NewMap = FTexture2D::CreateDepthArray(RenderCommand::GetDevice(), PointShadowResolution, Capacity, true); // Cube Array SRV 생성
+
+	if (!NewMap)
+	{
+		HTR_LOG(Error, "[Shadow] Point depth array creation failed ({} x {}, {} faces)", PointShadowResolution, PointShadowResolution, Capacity);
+		return nullptr;
+	}
+
+	// 생성에 성공한 경우에만 기존 자원을 교체한다.
+	PointShadowMap = std::move(NewMap);
+	return PointShadowMap.get();
+}
+
+void FRenderer::RenderSpotShadows(TArray<FLightShadowData>& Shadows, TArray<FSpotLightInfo>& SpotLights, bool bEnabled)
+{
+	for (FSpotLightInfo& Light : SpotLights)
+		Light.ShadowIndex = -1;
+	RenderCommand::UnbindShaderResource(13, EShaderBindFlagBits::Pixel);
+	if (!bEnabled)
+		return;
+
+	SpotShadowSlices.Reset();
+	const auto IsValidSpot = [&](const FLightShadowData& Shadow)
+	{
+		return Shadow.Type == EShadowProjection::Spot && Shadow.Settings.bCastShadows &&
+			Shadow.MapDesc.Type == EShadowMapType::Texture2D && Shadow.MapDesc.SliceCount == 1 &&
+			Shadow.Views.Num() == 1 && SpotLights.IsValidIndex(Shadow.LightIndex);
+	};
+	uint32 Count = 0;
+	for (const FLightShadowData& Shadow : Shadows)
+		if (IsValidSpot(Shadow)) ++Count;
+	if (!EnsureSpotShadowArray(Count))
+		return;
+
+	uint32 Slice = 0;
+	for (FLightShadowData& Shadow : Shadows)
+	{
+		if (!IsValidSpot(Shadow))
+			continue;
+		Shadow.Views[0].TargetSlice = Slice;
+		Shadow.MapDesc.Resolution = SpotShadowResolution;
+		if (RenderShadowDepth(Shadow))
+		{
+			// CPU 조명 번호와 깊이 배열의 slice 번호는 서로 다를 수 있다.
+			FSpotLightInfo& Light = SpotLights[Shadow.LightIndex];
+			Light.ShadowViewProjection = Shadow.Views[0].ViewProjection;
+			Light.ShadowBias = Shadow.Settings.DepthBias;
+			Light.ShadowIndex = static_cast<int32>(Slice);
+			SpotShadowSlices[Shadow.LightId] = Slice;
+		}
+		++Slice;
+	}
+	RenderCommand::BindShaderResource(13, SpotShadowMap->GetSRV(), EShaderBindFlagBits::Pixel);
+}
+
+void FRenderer::RenderPointShadows(TArray<FLightShadowData>& Shadows, TArray<FPointLightInfo>& PointLights, bool bEnabled)
+{
+	// 비활성화되거나 깊이 생성에 실패한 광원은 이전 그림자를 사용하지 않는다.
+	for (FPointLightInfo& Light : PointLights)
+		Light.ShadowIndex = -1;
+
+	// 이전 화면 렌더링에서 읽던 자원을 출력으로 다시 쓰기 전에 해제한다.
+	RenderCommand::UnbindShaderResource(14, EShaderBindFlagBits::Pixel);
+
+	// Unlit 등 그림자가 비활성화된 경우 깊이를 생성하지 않는다.
+	if (!bEnabled)
+		return;
+
+	// 이번 생성 결과로 연결 정보를 갱신한다. 비활성 상태에서는 마지막 결과를 유지한다.
+	PointShadowCubes.Reset();
+
+	const auto IsValidPoint = [&PointLights](const FLightShadowData& Shadow)
+		{
+			return Shadow.Type == EShadowProjection::Point &&
+				Shadow.Settings.bCastShadows &&
+				Shadow.MapDesc.Type == EShadowMapType::TextureCube &&
+				Shadow.MapDesc.SliceCount == 6 &&
+				Shadow.Views.Num() == 6 &&
+				PointLights.IsValidIndex(Shadow.LightIndex);
+		};
+
+	// 배열에 필요한 큐브 개수를 센다.
+	uint32 CubeCount = 0;
+
+	for (const FLightShadowData& Shadow : Shadows)
+	{
+		if (IsValidPoint(Shadow))
+			++CubeCount;
+	}
+
+	// 내부적으로 CubeCount * 6개의 깊이 이미지를 확보한다.
+	if (!EnsurePointShadowArray(CubeCount))
+		return;
+
+	uint32 CubeIndex = 0;
+
+	for (FLightShadowData& Shadow : Shadows)
+	{
+		if (!IsValidPoint(Shadow))
+			continue;
+
+		// Point 배열은 공통 해상도를 사용한다.
+		Shadow.MapDesc.Resolution = PointShadowResolution;
+
+		bool bRendered = true;
+		for (uint32 Face = 0; Face < 6; ++Face)
+		{
+			// 첫 광원: 0~5, 두 번째 광원: 6~11, ...
+			Shadow.Views[Face].TargetSlice = CubeIndex * 6u + Face;
+
+			// 해당 면의 행렬과 caster queue로 깊이를 기록한다.
+			if (!RenderShadowDepth(Shadow, Face))
+				bRendered = false;
+		}
+
+		// 여섯 면이 모두 준비된 광원만 조명 계산과 미리보기에서 사용한다.
+		if (bRendered)
+		{
+			FPointLightInfo& Light = PointLights[Shadow.LightIndex];
+			// GPU에는 면별 slice 번호가 아닌 큐브 번호를 전달한다.
+			Light.ShadowIndex = static_cast<int32>(CubeIndex);
+			Light.ShadowBias = Shadow.Settings.DepthBias;
+			Light.ShadowNearClip = PointShadowNearClip;
+
+			PointShadowCubes[Shadow.LightId] = CubeIndex;
+		}
+
+		++CubeIndex;
+	}
+
+	// t14의 깊이 텍스처를 조회할 때 사용할 샘플러.
+	RenderCommand::BindSamplerState(1,ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
+
+	// 모든 면의 DSV가 해제된 뒤 픽셀 셰이더에서 읽도록 연결한다.
+	RenderCommand::BindShaderResource(14, PointShadowMap->GetSRV(), EShaderBindFlagBits::Pixel);
 }
 
 
@@ -395,7 +602,7 @@ void FRenderer::DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProject
 		}
 		if (Pass != ESceneMeshPass::DepthPrepass && (RenderPacket.Material != LastMaterial || RenderPacket.MaterialParamData))
 			UpdateMaterialParams(RenderPacket);
-		if (bUsePerObjectSlots && RenderPacket.Slot != InvalidObjectSlot)
+		if (!OverrideQueue && bUsePerObjectSlots && RenderPacket.Slot != InvalidObjectSlot)
 		{
 			RenderCommand::BindConstantBufferRange(2, PerObjectSlotCB.get(), RenderPacket.Slot * PerObjectSlotConstants, PerObjectSlotConstants, EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
 		}
@@ -728,6 +935,72 @@ const FTexture2D* FRenderer::FindShadowMap2D(uint32 LightId) const
 {
 	const auto* Found = ShadowMaps2D.Find(LightId);
 	return Found ? Found->get() : nullptr;
+}
+
+const FTexture2D* FRenderer::PrepareShadowPreview(uint32 LightId, uint32 PointFace)
+{
+	const FTexture2D* Source = nullptr;
+	uint32 Slice = 0;
+
+	if (const uint32* SpotSlice = SpotShadowSlices.Find(LightId))
+	{
+		Source = SpotShadowMap.get();
+		Slice = *SpotSlice;
+	}
+	else if (const uint32* CubeIndex = PointShadowCubes.Find(LightId))
+	{
+		if (PointFace >= 6)
+			return nullptr;
+
+		Source = PointShadowMap.get();
+		Slice = *CubeIndex * 6u + PointFace;
+	}
+	else
+	{
+		// Directional의 기존 2D 맵은 복사 없이 그대로 표시한다.
+		return FindShadowMap2D(LightId);
+	}
+
+	if (!Source || Slice >= Source->GetArraySize())
+		return nullptr;
+
+	D3D11_TEXTURE2D_DESC Desc{};
+	// 선택한 slice와 동일한 크기와 포맷의 일반 2D 한 장만 재사용한다.
+	Desc.Width = Desc.Height = Source->GetWidth();
+	Desc.MipLevels = 1;
+	Desc.ArraySize = 1;
+	Desc.Format = Source->GetFormat();
+	Desc.SampleDesc.Count = 1;
+	Desc.Usage = D3D11_USAGE_DEFAULT;
+	Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+
+	const bool bNeedsCreation =
+		!ShadowPreviewTexture ||
+		ShadowPreviewTexture->GetWidth() != Desc.Width ||
+		ShadowPreviewTexture->GetHeight() != Desc.Height ||
+		ShadowPreviewTexture->GetFormat() != Desc.Format;
+
+	if (bNeedsCreation)
+	{
+		auto NewTexture = RenderCommand::CreateTexture2D(Desc);
+		if (!NewTexture || !NewTexture->GetRawPtr() || !NewTexture->GetSRV())
+			return nullptr;
+
+		ShadowPreviewTexture = std::move(NewTexture);
+	}
+
+	// 기존 ImGui 미리보기가 읽는 PS t0를 비운 뒤 목적지에 복사한다.
+	RenderCommand::UnbindShaderResource(0, EShaderBindFlagBits::Pixel);
+
+	// 그림자 패스가 끝나 원본 DSV가 해제된 뒤 호출한다.
+	// 깊이 자원은 영역 일부가 아닌 선택한 slice 전체를 복사한다.
+	RenderCommand::GetContext()->CopySubresourceRegion(
+		ShadowPreviewTexture->GetRawPtr(), 0, 0, 0, 0,
+		Source->GetRawPtr(),
+		D3D11CalcSubresource(0, Slice, Desc.MipLevels),
+		nullptr);
+
+	return ShadowPreviewTexture.get();
 }
 
 void FRenderer::SetDirectionalShadow(const FLightShadowData* Shadow)

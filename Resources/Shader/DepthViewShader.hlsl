@@ -8,6 +8,9 @@ cbuffer FDepthViewConstants : register(b0)
     float VisualizeRange;
     float3 CameraForward;
     uint DisplayMode;
+    float PreviewNearClip;
+    float PreviewFarClip;
+    float2 PreviewPadding;
 };
 
 
@@ -43,6 +46,17 @@ float4 mainPS(PSInput Input) : SV_Target
     uint2 Texel = min( uint2(saturate(Input.UV) * float2(Width, Height)), uint2(Width - 1, Height - 1));
 
     float Depth = SceneDepth.Load(int3(Texel, 0));
+
+    // Spot도 같은 2D 텍스처로 읽는다. 원근 깊이만 거리로 복원해 표시한다.
+    // raw depth는 대부분 0.99...이므로 그대로 표시하면 거의 흰색이다.
+    if (DisplayMode == 2)
+    {
+        float Near = PreviewNearClip;
+        float Far = PreviewFarClip;
+        float ViewDepth = Near * Far / max(Far - Depth * (Far - Near), 1e-6f);
+        float Shade = saturate((ViewDepth - Near) / (Far - Near));
+        return float4(Shade.xxx, 1.0f) * Input.Color;
+    }
 
     // 모드 1: 저장된 깊이를 그대로 회색조로 표시한다.
     // clear 깊이 1도 흰색으로 표시된다.

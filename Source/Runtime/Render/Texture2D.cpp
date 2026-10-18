@@ -149,6 +149,89 @@ void FTexture2D::CreateViews(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& I
 	}
 }
 
+TUniquePtr<FTexture2D> FTexture2D::CreateDepthArray(ID3D11Device* Device, uint32 Resolution, uint32 SliceCount, bool bCubeArray)
+{
+	if (!Device || Resolution == 0 || Resolution > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+		SliceCount == 0 || SliceCount > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION || bCubeArray && SliceCount % 6u != 0)
+	{
+		return nullptr;
+	}
+
+	TUniquePtr<FTexture2D> Result(new FTexture2D());
+	Result->Width = Result->Height = Resolution;
+	Result->ArraySize = SliceCount;
+	Result->Format = DXGI_FORMAT_R24G8_TYPELESS;
+	 Result->Dimension = bCubeArray
+		? ETextureDimension::TextureCubeArray
+		: ETextureDimension::Texture2DArray;
+
+	D3D11_TEXTURE2D_DESC Desc{};
+	Desc.Width = Desc.Height = Resolution;
+	Desc.MipLevels = 1;
+	Desc.ArraySize = SliceCount;
+	Desc.Format = Result->Format;
+	Desc.SampleDesc.Count = 1;
+	Desc.Usage = D3D11_USAGE_DEFAULT;
+	Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+	// 같은 2D 배열 저장소를 cubemap으로도 조회할 수 있게 만든다.
+	Desc.MiscFlags = bCubeArray ? D3D11_RESOURCE_MISC_TEXTURECUBE : 0;
+
+	ComPtr<ID3D11Texture2D> Texture;
+	if (FAILED(Device->CreateTexture2D(&Desc, nullptr, Texture.GetAddressOf())))
+		return nullptr;
+	Result->Texture = Texture;
+
+	// slice가 하나여도 PS의 Texture2DArray와 맞는 배열 SRV를 만든다.
+	D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
+	SRVDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+
+	if (bCubeArray)
+	{
+		SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURECUBEARRAY;
+		SRVDesc.TextureCubeArray.MostDetailedMip = 0;
+		SRVDesc.TextureCubeArray.MipLevels = 1;
+		SRVDesc.TextureCubeArray.First2DArrayFace = 0;
+
+		// SRV에는 면 개수가 아니라 큐브 개수를 지정한다.
+		SRVDesc.TextureCubeArray.NumCubes = SliceCount / 6u;
+	}
+	else
+	{
+		// 기존 Spot 배열.
+		SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+		SRVDesc.Texture2DArray.MipLevels = 1;
+		SRVDesc.Texture2DArray.ArraySize = SliceCount;
+	}
+
+	if (FAILED(Device->CreateShaderResourceView(Texture.Get(), &SRVDesc, Result->SRV.GetAddressOf())))
+		return nullptr;
+
+	Result->SliceDSVs.SetNum(static_cast<int32>(SliceCount));
+	for (uint32 Slice = 0; Slice < SliceCount; ++Slice)
+	{
+		D3D11_DEPTH_STENCIL_VIEW_DESC DSVDesc{};
+		DSVDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		DSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DARRAY;
+		DSVDesc.Texture2DArray.FirstArraySlice = Slice;
+		DSVDesc.Texture2DArray.ArraySize = 1;
+		if (FAILED(Device->CreateDepthStencilView(Texture.Get(), &DSVDesc, Result->SliceDSVs[Slice].GetAddressOf())))
+			return nullptr;
+	}
+	Result->DSV = Result->SliceDSVs[0];
+	return Result;
+}
+
+ID3D11DepthStencilView* FTexture2D::GetDSV(uint32 Slice) const
+{
+	if (Dimension == ETextureDimension::Texture2DArray || Dimension == ETextureDimension::TextureCubeArray)
+	{
+		// Spot은 광원별 slice, Point는 광원별 6개 면에 접근한다.
+		return SliceDSVs.IsValidIndex(Slice) ? SliceDSVs[Slice].Get() : nullptr;
+	}
+
+	return Slice == 0 ? FTexture::GetDSV() : nullptr;
+}
+
 UTexture2D::UTexture2D()
 {
 

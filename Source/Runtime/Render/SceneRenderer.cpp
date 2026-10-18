@@ -63,10 +63,10 @@ void FSceneRenderer::PrepareView(UWorld& World, const FSceneView& View, FSceneRe
     {
         // 먼저 Data.LightShadows에 광원별 그림자 데이터를 만듬
 		CollectShadowLights(World.GetScene(), Data);
-		// Directional Light 그림자만 시점별로 그릴 수 있도록 SceneView를 만듬
+		// 광원별 Shadow View를 만든 뒤 동일한 caster 수집을 적용한다.
 		BuildDirectionalLightShadowView(World.GetScene(), View, Data);
-		BuildSpotLightShadowView(World.GetScene(), View, Data);
-		//BuildPointLightShadowView(World.GetScene(), View, Data);
+		BuildSpotLightShadowView(World.GetScene(), Data);
+		BuildPointLightShadowView(World.GetScene(), Data);
 
 		for (FLightShadowData& Shadow : Data.LightShadows)
 			for (FShadowView& ShadowView : Shadow.Views)
@@ -368,7 +368,7 @@ void FSceneRenderer::BuildDirectionalLightShadowView(const FScene& Scene, FScene
 
 }
 
-void FSceneRenderer::BuildSpotLightShadowView(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data)
+void FSceneRenderer::BuildSpotLightShadowView(const FScene& Scene, FSceneRenderData& Data)
 {
     for (FLightShadowData& Shadow : Data.LightShadows)
     {
@@ -388,7 +388,7 @@ void FSceneRenderer::BuildSpotLightShadowView(const FScene& Scene, FSceneView Sc
             const FSpotLightInfo& Info = Spot->GetInfo();
 
             // 원근 투영의 near는 0보다 커야 한다.
-            constexpr float NearClip = 0.01f;
+            constexpr float NearClip = SpotShadowNearClip;
             if (Info.AttenuationRadius <= NearClip ||
                 Info.Direction.SizeSquared() < 1e-8f)
             {
@@ -437,6 +437,94 @@ void FSceneRenderer::BuildSpotLightShadowView(const FScene& Scene, FSceneView Sc
             break;
         }
     }
+}
+
+void FSceneRenderer::BuildPointLightShadowView(const FScene& Scene, FSceneRenderData& Data)
+{
+	// Point Light는 6개의 큐브맵 방향을 사용하여 그림자를 생성한다.
+	static const FVector FaceDirections[6] = {
+		FVector(1, 0, 0),   // +X
+		FVector(-1, 0, 0),  // -X
+		FVector(0, 1, 0),   // +Y
+		FVector(0, -1, 0),  // -Y
+		FVector(0, 0, 1),   // +Z
+		FVector(0, 0, -1)   // -Z
+	};
+
+    // cubemap 조회 시의 방향과 이미지 회전이 일치하도록 고정한다.
+    // Spot처럼 임의의 Up을 선택하지 않는다.
+	static const FVector FaceUps[6] = {
+		FVector(0, 1, 0),   // +X
+		FVector(0, 1, 0),   // -X
+		FVector(0, 0, -1),  // +Y
+		FVector(0, 0, 1),   // -Y
+		FVector(0, 1, 0),   // +Z
+		FVector(0, 1, 0)    // -Z
+	};
+
+    for (FLightShadowData& Shadow : Data.LightShadows)
+    {
+        if (Shadow.Type != EShadowProjection::Point)
+            continue;
+
+        // 기존 그림자 요청의 LightId에 해당하는 프록시를 찾는다.
+        for (const FLightSceneProxy* Proxy : Scene.Lights)
+        {
+            if (!Proxy->IsVisible() ||
+                Proxy->GetLightType() != ELightType::Point ||
+                Proxy->GetComponent()->GetUUID() != Shadow.LightId)
+            {
+                continue;
+            }
+
+            const auto* Point = static_cast<const FPointLightSceneProxy*>(Proxy);
+            const FPointLightInfo& Info = Point->GetInfo();
+
+            if (Info.AttenuationRadius <= PointShadowNearClip)
+                continue;
+
+            // 여섯 면이 같은 원근 투영을 공유한다.
+            FCameraProjection Projection;
+            Projection.Mode = EProjectionMode::Perspective;
+            Projection.FovDegrees = 90.0f;
+            Projection.NearClip = PointShadowNearClip;
+            Projection.FarClip = Info.AttenuationRadius;
+
+            const FMatrix LightProjection =  Projection.GetMatrix(1.0f);
+
+            Shadow.Views.Reset();
+
+            for (uint32 Face = 0; Face < 6; ++Face)
+            {
+                const FVector Forward = FaceDirections[Face];
+                const FVector Right = FaceUps[Face].Cross(Forward).GetSafeNormal();
+                const FVector Up = Forward.Cross(Right).GetSafeNormal();
+
+                // 현재 엔진의 View 공간:
+                // X = 앞쪽 깊이, Y = 오른쪽, Z = 위쪽.
+                FMatrix Rotation = FMatrix::Identity;
+                Rotation.SetAxis(0, Forward);
+                Rotation.SetAxis(1, Right);
+                Rotation.SetAxis(2, Up);
+
+                // 모든 면의 관측 위치는 광원 위치로 동일하다.
+                const FMatrix LightView = FMatrix::MakeTranslation(-Info.Position) * Rotation.GetTransposed();
+
+                FShadowView ShadowView;
+                ShadowView.ViewProjection = LightView * LightProjection;
+                ShadowView.Frustum = ExtractFrustumPlanes(ShadowView.ViewProjection);
+
+                // 지금은 광원 내부의 면 번호만 기록한다.
+                // 실제 배열 위치는 이후 CubeIndex * 6 + Face로 배정한다.
+                ShadowView.TargetSlice = Face;
+
+                Shadow.Views.Add(std::move(ShadowView));
+            }
+
+            break;
+        }
+    }
+
 }
 
 // TODO : 캡쳐한 전체 RenderObjects를 순회하지만, 나중에 BVH로 바꾸는게 좋을듯

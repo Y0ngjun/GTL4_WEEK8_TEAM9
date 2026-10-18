@@ -11,6 +11,8 @@
 #include "Component/RotatingMovementComponent.h"
 #include "Component/ProjectileMovementComponent.h"
 #include "Component/LightComponent.h"
+#include "Component/PointLightComponent.h"
+#include "Component/SpotLightComponent.h"
 #include "Asset/AssetManager.h"
 #include "Render/Material.h"
 #include "Render/Texture2D.h"
@@ -882,6 +884,9 @@ namespace
 					{
 						continue;
 					}
+					// Spot은 개별 해상도 대신 아래의 공통 배열 해상도를 편집한다.
+					if (Cast<USpotLightComponent>(Object) && Property.Name == "ShadowMapResolution")
+						continue;
 
 					const bool bReadOnly = Property.HasAnyFlags(CPF_EditConst);
 					if (bReadOnly) ImGui::BeginDisabled();
@@ -1037,6 +1042,14 @@ void FDetailsPanel::DrawShadowDepthPreview(ULightComponent* Light)
 	if (!ImGui::CollapsingHeader("Shadow Depth Map", ImGuiTreeNodeFlags_DefaultOpen))
 		return;
 
+	if (Cast<USpotLightComponent>(Light))
+	{
+		// 공통 배열이므로 선택한 Spot뿐 아니라 모든 Spot에 적용된다.
+		int Resolution = static_cast<int>(PreviewRenderer->GetSpotShadowResolution());
+		if (ImGui::SliderInt("Spot Shadow Resolution (all)", &Resolution, 128, 4096))
+			PreviewRenderer->SetSpotShadowResolution(static_cast<uint32>(Resolution));
+	}
+
 	if (!Light->IsCastingShadows())
 	{
 		ImGui::TextDisabled("Shadows disabled.");
@@ -1049,8 +1062,18 @@ void FDetailsPanel::DrawShadowDepthPreview(ULightComponent* Light)
 		return;
 	}
 
-	// 프레임의 CPU 데이터는 이미 정리되었으므로 광원 ID로 GPU 자원을 조회한다.
-	const FTexture2D* ShadowMap = PreviewRenderer->FindShadowMap2D(Light->GetUUID());
+	uint32 PointFace = 0;
+	if (Cast<UPointLightComponent>(Light))
+	{
+		// View 생성 순서와 같은 여섯 방향 중 하나만 표시한다.
+		static int SelectedFace = 0;
+		const char* Faces[] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
+		ImGui::Combo("Face", &SelectedFace, Faces, 6);
+		PointFace = static_cast<uint32>(SelectedFace);
+	}
+
+	// 선택한 광원의 slice 하나를 기존 2D 미리보기로 표시한다.
+	const FTexture2D* ShadowMap = PreviewRenderer->PrepareShadowPreview(Light->GetUUID(), PointFace);
 	if (!ShadowMap || !ShadowMap->GetSRV())
 	{
 		ImGui::TextDisabled("No shadow map available. Render a Lit viewport with shadows enabled.");
@@ -1063,6 +1086,15 @@ void FDetailsPanel::DrawShadowDepthPreview(ULightComponent* Light)
 
 	const float Size = std::clamp(ImGui::GetContentRegionAvail().x, 1.0f, 320.0f);
 	ImDrawList* DrawList = ImGui::GetWindowDrawList();
+
+	// 선택한 광원 하나만 표시하므로 기존 콜백을 그대로 사용한다.
+	if (const auto* Spot = Cast<USpotLightComponent>(Light))
+		DepthPreviewRenderer->SetShadowPreviewRange(SpotShadowNearClip, Spot->GetAttenuationRadius());
+	else if (const auto* Point = Cast<UPointLightComponent>(Light))
+		// Point 각 면의 원근 깊이도 기존 셰이더로 전방 깊이를 복원한다.
+		DepthPreviewRenderer->SetShadowPreviewRange(PointShadowNearClip, Point->GetAttenuationRadius());
+	else
+		DepthPreviewRenderer->SetShadowPreviewRange(0.0f, 0.0f);
 
 	// Image()는 draw 명령을 예약한다. 실제 draw 직전에 PS와 모드를 설정한다.
 	DrawList->AddCallback(

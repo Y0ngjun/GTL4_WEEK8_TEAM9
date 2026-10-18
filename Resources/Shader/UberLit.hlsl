@@ -57,6 +57,11 @@ struct FPointLightInfo
     float AttenuationRadius;
     float3 Position;
     float Padding;
+    
+    int ShadowIndex;
+    float ShadowBias;
+    float ShadowNearClip;
+    float ShadowPadding;
 };
 
 struct FSpotLightInfo
@@ -67,6 +72,13 @@ struct FSpotLightInfo
     float CosInnerCone;
     float3 Direction;
     float CosOuterCone;
+
+    // CPU FSpotLightInfo와 동일한 배치. 기존 Spot 버퍼로 함께 전달한다.
+    matrix ShadowViewProjection;
+    int ShadowIndex;
+    float ShadowBias;
+    float ShadowNearClip;
+    float ShadowPadding;
 };
 
 struct FVSInput
@@ -157,6 +169,9 @@ StructuredBuffer<FSpotLightInfo> StructuredSpotLights : register(t9);
 Buffer<uint> TileLightCount : register(t10);
 Buffer<uint> TileLightIndices : register(t11);
 Texture2D<float> DirectionalShadowMap : register(t12);
+Texture2DArray<float> SpotShadowMaps : register(t13);
+// 한 큐브가 Point 광원 하나의 여섯 방향을 담당한다.
+TextureCubeArray<float> PointShadowMaps : register(t14);
 
 Texture2D AlbedoTexture : register(t0);
 
@@ -165,6 +180,7 @@ Texture2D NormalTexture : register(t1);
 #endif
 
 SamplerState AlbedoSampler : register(s0);
+SamplerState PointShadowSampler : register(s1);
 
 float3 DiffuseTerm(float3 Il, float3 N, float3 L)
 {
@@ -279,6 +295,75 @@ void ComputeLighting(float3 N, float3 WorldPosition, float3 V, float n, out floa
 }
 
 
+float ComputeSpotShadow(FSpotLightInfo Light, float3 WorldPosition)
+{
+    if (ReceiveShadow == 0u || Light.ShadowIndex < 0)
+        return 1.0f;
+
+    float4 Clip = mul(float4(WorldPosition, 1.0f), Light.ShadowViewProjection);
+    // 원근 투영의 광원 뒤쪽은 나누기 전에 제외한다.
+    if (Clip.w <= 0.0f)
+        return 1.0f;
+
+    float3 NDC = Clip.xyz / Clip.w;
+    float2 UV = NDC.xy * float2(0.5f, -0.5f) + 0.5f;
+    if (any(UV < 0.0f) || any(UV > 1.0f) || NDC.z < 0.0f || NDC.z > 1.0f)
+        return 1.0f;
+
+    uint Width, Height, Layers;
+    SpotShadowMaps.GetDimensions(Width, Height, Layers);
+    if (Width == 0 || Height == 0 || (uint)Light.ShadowIndex >= Layers)
+        return 1.0f;
+
+    uint2 Texel = min(uint2(UV * float2(Width, Height)), uint2(Width - 1u, Height - 1u));
+    float MapDepth = SpotShadowMaps.Load(int4(int2(Texel), Light.ShadowIndex, 0));
+    // Spot의 원근 깊이는 1 근처에 몰리므로 normalized z에서 큰 bias를 빼면
+    // 가려진 픽셀도 밝게 판정된다. 저장 깊이를 광원 뷰 깊이로 복원한다.
+    float Near = Light.ShadowNearClip;
+    float Far = Light.AttenuationRadius;
+    float MapViewDepth = Near * Far / max(Far - MapDepth * (Far - Near), 1e-6f);
+
+    // 이 엔진의 +X 원근 투영에서는 clip.w가 광원 뷰 깊이다.
+    // bias도 같은 월드 단위로 적용하며, PCF는 이후 추가한다.
+    return Clip.w - max(Light.ShadowBias, 0.0f) <= MapViewDepth ? 1.0f : 0.0f;
+}
+
+float ComputePointShadow(FPointLightInfo Light, float3 WorldPosition)
+{
+    // 물체가 그림자를 받지 않거나, 광원에 유효한 그림자가 없으면 통과.
+    if (ReceiveShadow == 0u || Light.ShadowIndex < 0)
+        return 1.0f;
+
+    // 광원 → 현재 표면 방향.
+    // 큐브맵이 이 방향으로 면과 UV를 선택한다.
+    float3 Direction = WorldPosition - Light.Position;
+
+    // 선택되는 면의 전방 깊이는 가장 큰 절댓값 성분이다.
+    // 직선거리 length(Direction)와 구분해야 한다.
+    float3 AbsDirection = abs(Direction);
+    float CurrentViewDepth =  max(AbsDirection.x, max(AbsDirection.y, AbsDirection.z));
+
+    float Near = Light.ShadowNearClip;
+    float Far = Light.AttenuationRadius;
+
+    // 깊이 맵이 기록하지 않는 범위는 비교하지 않는다.
+    if (Far <= Near ||
+        CurrentViewDepth < Near ||
+        CurrentViewDepth >= Far)
+    {
+        return 1.0f;
+    }
+
+    // xyz는 조회 방향, w는 큐브 배열에서 사용할 큐브 번호.
+    float MapDepth = PointShadowMaps.SampleLevel(PointShadowSampler, float4(Direction, (float) Light.ShadowIndex), 0.0f).r;
+
+    // 저장된 원근 NDC 깊이를 해당 면의 전방 깊이로 복원한다.
+    float MapViewDepth = Near * Far / max(Far - MapDepth * (Far - Near), 1e-6f);
+
+    // 양쪽 모두 같은 면의 전방 깊이이며, bias도 월드 단위다.
+    return CurrentViewDepth - max(Light.ShadowBias, 0.0f)  <= MapViewDepth ? 1.0f : 0.0f;
+}
+
 void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, float3 V, float n, float2 PixelPosition,float DirectionalShadowVisibility, out float3 DiffuseLight, out float3 SpecularLight)
 {
     DiffuseLight = 0.0f;
@@ -331,7 +416,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #endif
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float3 Il = Light.Color * DistanceAttenuation * GeoFactor;
+            float Visibility = ComputePointShadow(Light, WorldPosition);
+            float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Visibility;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
         }
@@ -361,7 +447,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
 
-            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor;
+            float Visibility = ComputeSpotShadow(Light, WorldPosition);
+            float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Visibility;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
         }

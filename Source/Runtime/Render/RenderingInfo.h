@@ -41,6 +41,8 @@ struct FRenderingDesc
 	ERenderTargetLoadOp  LoadOp = ERenderTargetLoadOp::Clear;
 	ERenderTargetStoreOp StoreOp = ERenderTargetStoreOp::Store;
 	FClearValue ClearValue = FClearValue();
+	// 깊이 배열에서 출력할 slice. 기존 단일 2D 패스는 기본값 0을 사용한다.
+	uint32 ArraySlice = 0;
 };
 
 struct FRenderingInfo

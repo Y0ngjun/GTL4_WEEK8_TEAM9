@@ -306,12 +306,32 @@ void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray
         for (FLightSceneProxy* Proxy : Lights)
         {
             if (!Proxy->IsVisible() || Proxy->GetLightType() != Type) continue;
-            if (Type == ELightType::Point)
-            {
-                const FPointLightInfo& Info = static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
-                OutPointLight.Add(Info);
-                OutCullingLights.Add({ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius});
-            }
+			if (Type == ELightType::Point)
+			{
+				const FPointLightInfo& Info =
+					static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
+
+				// Add하기 전 개수가 이번 광원의 Point 조명 배열 번호다.
+				const int32 PointIndex = OutPointLight.Num();
+
+				// 기존 조명과 타일 컬링 데이터 수집은 유지한다.
+				OutPointLight.Add(Info);
+				OutCullingLights.Add({ ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius });
+
+				if (Shadows)
+				{
+					for (FLightShadowData& Shadow : *Shadows)
+					{
+						// 동일한 Point 광원의 그림자 요청을 찾는다.
+						if (Shadow.Type == EShadowProjection::Point &&
+							Shadow.LightId == Proxy->GetComponent()->GetUUID())
+						{
+							Shadow.LightIndex = PointIndex;
+							break;
+						}
+					}
+				}
+			}
 			else
 			{
 				const auto* Spot = static_cast<FSpotLightSceneProxy*>(Proxy);

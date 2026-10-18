@@ -28,8 +28,8 @@ private:
     // 그림자에 관련된 static Mesh들의 월드 AABB를 합친 SceneBounds를 계산한다.
     // 월드 좌표를 Light의 시점으로 변환하고 투영하는 행렬을 만드는 함수들
 	void BuildDirectionalLightShadowView(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data);
-	void BuildSpotLightShadowView(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data);
-	void BuildPointLightShadowView(const FScene& Scene, FSceneView SceneView, FSceneRenderData& Data);
+	void BuildSpotLightShadowView(const FScene& Scene, FSceneRenderData& Data);
+	void BuildPointLightShadowView(const FScene& Scene, FSceneRenderData& Data);
     void BuildShadowCasterQueue(FShadowView& ShadowView);
 
     struct FPrimitiveSnapshot

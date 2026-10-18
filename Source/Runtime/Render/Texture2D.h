@@ -5,6 +5,7 @@
 #include "Render/RenderDevice.h"
 #include "Texture.h"
 #include "ImageLoader.h"
+#include "Containers/Array.h"
 
 class FTexture2D : public FTexture
 {
@@ -16,9 +17,16 @@ public:
 	// For Swapchain
 	FTexture2D(ID3D11Device* Device, ComPtr<ID3D11Resource> SwapchainTexture, const D3D11_TEXTURE2D_DESC& InDesc);
 	~FTexture2D() = default;
+	// 깊이 배열도 단일 2D 텍스처처럼 자원과 뷰를 함께 소유한다.
+	static TUniquePtr<FTexture2D> CreateDepthArray(ID3D11Device* Device, uint32 Resolution, uint32 SliceCount, bool bCubeArray = false);
+	uint32 GetArraySize() const { return ArraySize; }
+	ID3D11DepthStencilView* GetDSV(uint32 Slice = 0) const;
 
 private:
+	FTexture2D() = default;
 	void CreateViews(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& InDesc);
+	uint32 ArraySize = 1;
+	TArray<ComPtr<ID3D11DepthStencilView>> SliceDSVs;
 };
 
 class UTexture2D : public URenderAsset

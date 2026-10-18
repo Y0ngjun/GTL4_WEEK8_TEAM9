@@ -63,7 +63,8 @@ struct FLightShadowData
 
 	uint32 LightId = 0;
 
-	// 이번 뷰의 SpotLights 배열에서 이 광원이 위치한 번호.
+	// 이번 뷰의 조명 배열에서 이 광원이 위치한 번호.
+	// Point면 PointLights, Spot이면 SpotLights의 인덱스다.
 	// GPU에 전달하지 않는 CPU 준비 정보다.
 	int32 LightIndex = -1;
 

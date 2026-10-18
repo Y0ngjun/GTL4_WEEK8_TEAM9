@@ -286,6 +286,17 @@ void FRenderDevice::CreateStates()
 		Desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::LinearWrap].GetAddressOf());
+
+		// 기존 Desc의 나머지 설정은 재사용한다.
+		// 깊이 비교 전에 이웃 깊이 값이 섞이지 않도록 point sampling을 사용한다.
+		Desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+		Desc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		Desc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		Desc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+
+		Device->CreateSamplerState(
+			&Desc,
+			SamplerStates[(uint8)ESamplerState::PointClamp].GetAddressOf());
 	}
 }
 

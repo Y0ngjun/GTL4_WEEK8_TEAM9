@@ -112,10 +112,20 @@ public:
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
 	// 광원 하나의 Shadow Map에 caster들의 깊이를 기록한다.
-	void RenderShadowDepth(const FLightShadowData& Shadow);
+	bool RenderShadowDepth(const FLightShadowData& Shadow, uint32 ViewIndex = 0);
+	void RenderSpotShadows(TArray<FLightShadowData>& Shadows, TArray<FSpotLightInfo>& SpotLights, bool bEnabled);
+	void RenderPointShadows(TArray<FLightShadowData>& Shadows, TArray<FPointLightInfo>& PointLights, bool bEnabled);
+
 	// 생성된 Shadow Map을 빌려 조회한다. 조회 중에는 자원을 생성하지 않는다.
 	const FTexture2D* FindShadowMap2D(uint32 LightId) const;
+	const FTexture2D* PrepareShadowPreview(uint32 LightId, uint32 PointFace = 0);
 	void SetDirectionalShadow(const FLightShadowData* Shadow);
+	uint32 GetSpotShadowResolution() const { return SpotShadowResolution; }
+	void SetSpotShadowResolution(uint32 Resolution)
+	{
+		if (Resolution > 0 && Resolution <= D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION)
+			SpotShadowResolution = Resolution;
+	}
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -180,8 +190,24 @@ private:
 	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = true);
 	FTexture2D* EnsureShadowMap2D(uint32 LightId, FShadowMapDesc ShadowMapDesc);
-	
+	FTexture2D* EnsureSpotShadowArray(uint32 SliceCount);
+	// CubeCount는 그림자를 생성하는 Point 광원 개수다.
+	FTexture2D* EnsurePointShadowArray(uint32 CubeCount);
+
+
 	TMap<uint32, TUniquePtr<FTexture2D>> ShadowMaps2D;
+	// 배열의 크기와 SRV, slice별 DSV는 텍스처가 관리한다.
+	TUniquePtr<FTexture2D> SpotShadowMap;
+	uint32 SpotShadowResolution = 1024;
+	TMap<uint32, uint32> SpotShadowSlices;
+	// 선택한 광원 하나를 기존 2D 미리보기로 표시한다.
+	TUniquePtr<FTexture2D> ShadowPreviewTexture;
+	TUniquePtr<FTexture2D> PointShadowMap;
+	// 광원 ID에 대응하는 Point 배열의 큐브 번호.
+	TMap<uint32, uint32> PointShadowCubes;
+
+	// Point 하나가 6면을 사용하므로 우선 512로 시작한다.
+	uint32 PointShadowResolution = 512;
 
 	// 이번 프레임 스태틱 메시 묶음 (정렬 키 순). 비어 있지 않은 것만 담는다.
 	std::vector<const FStaticDrawGroup*> StaticGroups;

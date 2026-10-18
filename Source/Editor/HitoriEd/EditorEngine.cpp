@@ -879,30 +879,38 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
 	ViewWorld.GetScene().BuildLightingConstants(Lighting);
-	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
-	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
+	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix, &Data.LightShadows);
 
 	// Unlit이거나 해당 광원의 그림자가 꺼져 있으면 nullptr로 유지된다.
 	const FLightShadowData* DirectionalShadow = nullptr;
 
 	// 그림자 Pass
 	// Lit 모드에서 메시를 그리는 경우, 광원별 Shadow Map을 먼저 생성한다.
-	if (View.RenderMode.ViewMode == EViewMode::Lit &&
-		SettingsPanel->GetSettings().bDrawPrimitives)
+	const bool bRenderShadows = View.RenderMode.ViewMode == EViewMode::Lit &&
+		SettingsPanel->GetSettings().bDrawPrimitives;
+	if (bRenderShadows)
 	{
 		for (const FLightShadowData& Shadow : Data.LightShadows)
 		{
-			Renderer->RenderShadowDepth(Shadow);
-
 			// CollectShadowLights()가 선택한 Directional은 최대 하나다.
 			// 조명 계산에 사용한 광원과 동일한 그림자 데이터를 선택한다.
-			if (Shadow.Type == EShadowProjection::Directional)
+			if (Shadow.Type == EShadowProjection::Directional && Renderer->RenderShadowDepth(Shadow))
 			{
 				DirectionalShadow = &Shadow;
 			}
 		}
 	}
 	
+	// Spot 그림자 정보를 채운 뒤 기존 조명 버퍼에 함께 업로드한다.
+	// 비활성 상태에서도 호출해 이전 뷰의 배열 바인딩을 해제한다.
+	Renderer->RenderSpotShadows(Data.LightShadows, Data.SpotLights, bRenderShadows);
+
+	// Point 배열의 각 광원에 대해 6면의 깊이를 기록한다.
+	// 비활성 상태에서도 함수에 진입해 이전 SRV 바인딩을 해제한다.
+	Renderer->RenderPointShadows(Data.LightShadows, Data.PointLights, bRenderShadows);
+
+	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
+
 	// Lit 조건 밖에서 항상 호출한다.
 	// Unlit으로 전환한 경우에도 기존 그림자 상태를 비활성화해야 한다.
 	Renderer->SetDirectionalShadow(DirectionalShadow);

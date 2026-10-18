@@ -64,9 +64,11 @@ void FDepthViewRenderer::BindShadowPreview()
 	if (!IsReady())
 		return;
 
-	// FDepthViewConstants를 초기화하고, DisplayMode = 1 설정
+	// Directional의 raw depth 표시를 유지하고 Spot만 거리 기준으로 표시한다.
 	FDepthViewConstants Constants{};
-	Constants.DisplayMode = 1;
+	Constants.PreviewNearClip = ShadowPreviewNearClip;
+	Constants.PreviewFarClip = ShadowPreviewFarClip;
+	Constants.DisplayMode = ShadowPreviewNearClip > 0.0f && ShadowPreviewFarClip > ShadowPreviewNearClip ? 2u : 1u;
 	// ConstantBuffer를 업로드하고 PS의 b0에 바인딩
 	RenderCommand::UpdateBufferData(ConstantBuffer.get(), &Constants);
 	RenderCommand::BindConstantBuffer(0, ConstantBuffer.get(), EShaderBindFlagBits::Pixel);
