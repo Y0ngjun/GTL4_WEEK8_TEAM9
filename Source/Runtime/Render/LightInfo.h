@@ -28,6 +28,12 @@ struct FPointLightInfo
 	float AttenuationRadius = 0.0f;
 	FVector Position;
 	float Padding = 0.0f;
+	// 그림자: FPointLightShadowMapArray의 큐브 번호(-1이면 없음)와 6면 공통 원근 투영의 깊이 계수.
+	// 셰이더는 방향 벡터의 가장 큰 성분 z로 depth = ZScale + ZOffset / z를 만들어 큐브 값과 비교한다.
+	int32 ShadowSlot = -1;
+	float ShadowZScale = 1.0f;
+	float ShadowZOffset = 0.0f;
+	float ShadowPadding = 0.0f;
 };
 
 struct FSpotLightInfo
@@ -57,6 +63,6 @@ struct FLightingConstants
 
 static_assert(sizeof(FAmbientLightInfo) == 16);
 static_assert(sizeof(FDirectionalLightInfo) == 32);
-static_assert(sizeof(FPointLightInfo) == 32);
+static_assert(sizeof(FPointLightInfo) == 48);
 static_assert(sizeof(FSpotLightInfo) == 128);
-static_assert(sizeof(FLightingConstants) == 704);
+static_assert(sizeof(FLightingConstants) == 768);

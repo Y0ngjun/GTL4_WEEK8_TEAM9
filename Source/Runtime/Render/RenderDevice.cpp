@@ -295,6 +295,18 @@ void FRenderDevice::CreateStates()
 		Desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::LinearWrap].GetAddressOf());
+
+		// 그림자 비교: 참조 depth <= 저장 depth면 빛. 인접 4칸 비교 결과를 bilinear로 섞어 경계가 덜 각진다.
+		D3D11_SAMPLER_DESC ShadowDesc = {};
+		ShadowDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+		ShadowDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+		ShadowDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+		ShadowDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+		ShadowDesc.MaxAnisotropy = 1;
+		ShadowDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+		ShadowDesc.MinLOD = 0.0f;
+		ShadowDesc.MaxLOD = D3D11_FLOAT32_MAX;
+		Device->CreateSamplerState(&ShadowDesc, SamplerStates[(uint8)ESamplerState::ShadowCompare].GetAddressOf());
 	}
 }
 

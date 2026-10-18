@@ -642,7 +642,8 @@ namespace
 					int SamplerIndex = Effective ? static_cast<int>(Effective->SamplerState) : static_cast<int>(ESamplerState::LinearClamp);
 					if (ImGui::BeginCombo("##SamplerState", SamplerItems[SamplerIndex]))
 					{
-						for (int i = 0; i < static_cast<int>(ESamplerState::Count); ++i)
+						// 머티리얼이 고를 수 있는 sampler만 나열한다. 그림자 비교 sampler 같은 내부용은 제외된다.
+						for (int i = 0; i < IM_ARRAYSIZE(SamplerItems); ++i)
 						{
 							if (ImGui::Selectable(SamplerItems[i], SamplerIndex == i))
 							{

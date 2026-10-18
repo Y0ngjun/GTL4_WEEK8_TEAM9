@@ -324,7 +324,12 @@ void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray
             if (!Proxy->IsVisible() || Proxy->GetLightType() != Type) continue;
             if (Type == ELightType::Point)
             {
-                const FPointLightInfo& Info = static_cast<FPointLightSceneProxy*>(Proxy)->GetInfo();
+                const auto* Point = static_cast<FPointLightSceneProxy*>(Proxy);
+                // 셰이더가 큐브 번호와 깊이 계수로 그림자를 읽도록 프록시의 그림자 정보를 함께 싣는다.
+                FPointLightInfo Info = Point->GetInfo();
+                Info.ShadowSlot = Point->GetShadowSlot();
+                Info.ShadowZScale = Point->GetShadowZScale();
+                Info.ShadowZOffset = Point->GetShadowZOffset();
                 OutPointLight.Add(Info);
                 OutCullingLights.Add({ViewMatrix.TransformPosition(Info.Position), Info.AttenuationRadius});
             }

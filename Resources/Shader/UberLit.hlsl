@@ -57,6 +57,11 @@ struct FPointLightInfo
     float AttenuationRadius;
     float3 Position;
     float Padding;
+    // LightInfo.h의 FPointLightInfo와 같은 순서·크기(48B)
+    int ShadowSlot;
+    float ShadowZScale;
+    float ShadowZOffset;
+    float PointShadowPadding;
 };
 
 struct FSpotLightInfo
@@ -165,6 +170,10 @@ Texture2D NormalTexture : register(t1);
 Texture2D DirectionalLightShadowMap : register(t12);
 // Spot마다 slice 한 장. FSpotLightInfo::ShadowSlot으로 고른다.
 Texture2DArray SpotShadowMaps : register(t13);
+// Point마다 큐브 하나(6면). 방향 벡터로 읽으면 GPU가 면과 면 안 좌표를 고른다.
+TextureCubeArray PointShadowMaps : register(t14);
+// 참조 depth <= 저장 depth면 1. 인접 4칸 결과를 bilinear로 섞는다.
+SamplerComparisonState ShadowCompareSampler : register(s1);
 
 SamplerState AlbedoSampler : register(s0);
 
@@ -304,6 +313,23 @@ float ComputeDirectionalShadow(float3 WorldPosition)
     return LightNDC.z <= StoredDepth ? 1.0f : 0.0f;
 }
 
+float ComputePointShadow(FPointLightInfo Light, float3 WorldPosition)
+{
+    if (Light.ShadowSlot < 0)
+        return 1.0f;
+
+    // 광원 → 픽셀 방향. GPU는 절댓값이 가장 큰 성분의 면을 고른다.
+    float3 D = WorldPosition - Light.Position;
+    float3 A = abs(D);
+    // 고른 면의 view 깊이 = 가장 큰 성분. 6면이 같은 원근 투영이라 그 depth를 바로 계산할 수 있다.
+    float ZView = max(A.x, max(A.y, A.z));
+    if (ZView <= 0.0f)
+        return 1.0f;
+    float Depth = Light.ShadowZScale + Light.ShadowZOffset / ZView;
+
+    return PointShadowMaps.SampleCmpLevelZero(ShadowCompareSampler, float4(D, (float) Light.ShadowSlot), Depth);
+}
+
 float ComputeSpotShadow(FSpotLightInfo Light, float3 WorldPosition)
 {
     if (Light.ShadowSlot < 0)
@@ -379,7 +405,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #endif
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float3 Il = Light.Color * DistanceAttenuation * GeoFactor;
+            float Shadow = ComputePointShadow(Light, WorldPosition);
+            float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
         }
