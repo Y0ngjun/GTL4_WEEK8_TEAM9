@@ -114,6 +114,37 @@ public:
                 CullingSphereRadius = Info.AttenuationRadius * std::sqrt(1.0f - Info.CosOuterCone * Info.CosOuterCone);
             }
         }
+		const FVector Forward = Info.Direction.GetSafeNormal();
+
+		const FVector UpGuide = (std::abs(Forward.Z) > 0.99f) ? FVector(1.0f, 0.0f, 0.0f) : FVector(0.0f, 0.0f, 1.0f);
+		// 카메라와 같은 규약(Right = Up × Forward). 반대로 하면 좌우가 뒤집혀 후면 컬링이 앞면을 버린다.
+		const FVector Right = FVector::Cross(UpGuide, Forward).GetSafeNormal();
+		const FVector Up = FVector::Cross(Forward, Right);
+
+		FMatrix Rotation = FMatrix::Identity;
+		Rotation.M[0][0] = Forward.X; Rotation.M[0][1] = Forward.Y; Rotation.M[0][2] = Forward.Z;
+		Rotation.M[1][0] = Right.X;   Rotation.M[1][1] = Right.Y;   Rotation.M[1][2] = Right.Z;
+		Rotation.M[2][0] = Up.X;      Rotation.M[2][1] = Up.Y;      Rotation.M[2][2] = Up.Z;
+
+		const FMatrix View = FMatrix::MakeTranslation(-Info.Position) * Rotation.GetTransposed();
+
+		// FCameraProjection 원근과 같은 배치(+X 깊이, D3D [0,1]). slice가 정사각형이라 가로세로 배율이 같다.
+		 // 반각이 90도에 붙으면 tan이 폭주
+		const float CosHalf = std::max(Info.CosOuterCone, 0.02f);
+		// tan(acos(c))
+		const float TanHalf = std::sqrt(1.0f - CosHalf * CosHalf) / CosHalf;      
+		const float Scale = 1.0f / TanHalf;
+		const float NearZ = 0.1f;
+		const float FarZ = std::max(Info.AttenuationRadius, NearZ + 0.01f);
+		const float ZScale = FarZ / (FarZ - NearZ);
+		const float ZOffset = -NearZ * FarZ / (FarZ - NearZ);
+		const FMatrix Projection(
+			0.0f, 0.0f, ZScale, 1.0f,
+			Scale, 0.0f, 0.0f, 0.0f,
+			0.0f, Scale, 0.0f, 0.0f,
+			0.0f, 0.0f, ZOffset, 0.0f);
+
+		ShadowViewProj = View * Projection;
         CullingSphereCenter = Info.Position + Info.Direction * SphereOffset;
 		bVisible = Light->IsLightVisible();
 	}
@@ -121,6 +152,11 @@ public:
 	const FSpotLightInfo& GetInfo() const { return Info; }
     const FVector& GetCullingSphereCenter() const { return CullingSphereCenter; }
     float GetCullingSphereRadius() const { return CullingSphereRadius; }
+	// FScene이 AllocateSlot/FreeSlot에 넘겨 slot을 바꿀 때 쓴다.
+	int32& GetShadowSlot() { return ShadowSlot; }
+	// 렌더 코드는 읽기만 한다. -1이면 그림자 slice가 없다.
+	int32 GetShadowSlot() const { return ShadowSlot; }
+	const FMatrix& GetShadowViewProj() const { return ShadowViewProj; }
 
 private:
 	FSpotLightInfo Info;
@@ -129,4 +165,8 @@ private:
     float SphereOffset = 0.0f;
     float CachedRadius = -1.0f;
     float CachedCosOuter = -2.0f;
+
+	//FSpotShadowMapArray에 할당된 슬롯 번호
+	int32  ShadowSlot = -1; 
+	FMatrix ShadowViewProj;
 };

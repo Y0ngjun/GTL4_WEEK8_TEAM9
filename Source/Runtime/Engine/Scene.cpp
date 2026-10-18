@@ -3,6 +3,9 @@
 #include "LightSceneProxy.h"
 #include "Render/ColorWorkflow.h"
 
+constexpr uint32 MaxSpotShadows = 4;
+constexpr uint32 SpotShadowResolution = 1024;
+
 void FScene::AddPrimitive(UPrimitiveComponent* Component)
 {
 	if (!Component || Component->SceneProxy) return;
@@ -123,6 +126,12 @@ void FScene::AddLight(ULightComponentBase* Component)
 	FLightSceneProxy* Proxy = Component->CreateSceneProxy();
 	if (!Proxy) return;
 
+	if(Proxy->GetLightType() == ELightType::Spot)
+	{
+		SpotLightShadowMaps.Ensure(MaxSpotShadows, SpotShadowResolution);
+		SpotLightShadowMaps.AllocateSlot(static_cast<FSpotLightSceneProxy*>(Proxy)->GetShadowSlot());
+	}
+
 	Proxy->Scene = this;
 	Component->SceneProxy = Proxy;
 	// 다음 UpdateAllTransforms 전에 그려져도 기본값이 아닌 실제 값을 쓰도록 바로 채운다.
@@ -146,6 +155,8 @@ void FScene::RemoveLight(ULightComponentBase* Component)
 		if (Found != INDEX_NONE) DirtyLights.RemoveAtSwap(Found);
 	}
 
+	if (Proxy->GetLightType() == ELightType::Spot)
+		SpotLightShadowMaps.FreeSlot(static_cast<FSpotLightSceneProxy*>(Proxy)->GetShadowSlot());
 	Component->SceneProxy = nullptr;
 	delete Proxy;
 }
@@ -159,6 +170,7 @@ void FScene::RemoveAllLights()
 	}
 	Lights.Reset();
 	DirtyLights.Reset();
+	SpotLightShadowMaps.Reset();
 }
 
 void FScene::MarkLightDirty(FLightSceneProxy* Proxy)

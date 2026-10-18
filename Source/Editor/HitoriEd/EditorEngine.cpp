@@ -682,7 +682,7 @@ void UEditorEngine::RenderShadowPass(FViewport& Viewport, UWorld& ViewWorld, con
 	Shadow.bValid = BuildDirectionalShadowViewProjection(View, DirectionalLight.Direction, Data.SceneBounds, Data.VisibleBounds, Shadow.LightViewProj);
 
 
-	//2. VP 기반 depth 텍스처 생성
+	//2. VP 기반 depth 텍스처 생성. Directional이 없어도 아래 Spot 그림자는 그린다.
 	FTexture2D* DirectionalShadowMap = Shadow.bValid ? Viewport.EnsureDirectionalShadowMap(DirectionalShadowMapSize) : nullptr;
 	if (!DirectionalShadowMap)
 		Shadow.bValid = false;
@@ -698,6 +698,40 @@ void UEditorEngine::RenderShadowPass(FViewport& Viewport, UWorld& ViewWorld, con
 		Renderer->RenderShadowDepth(Shadow.LightViewProj);
 		RenderCommand::EndRenderPass(ShadowInfo);
 	}
+
+
+
+	//Spot Light Shadow Map Pass: Spot마다 자기 slice에 깊이를 그린다
+	FScene& Scene = ViewWorld.GetScene();
+	FSpotLightShadowMapArray& SpotMaps = Scene.SpotLightShadowMaps;
+	const uint32 SpotShadowMapSize = SpotMaps.GetResolution();
+	ID3D11DeviceContext* Context = RenderCommand::GetContext();
+
+	RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth);
+	RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	for (FLightSceneProxy* Proxy : Scene.Lights)
+	{
+		if (Proxy->GetLightType() != ELightType::Spot || !Proxy->IsVisible())
+			continue;
+		const FSpotLightSceneProxy* Spot = static_cast<const FSpotLightSceneProxy*>(Proxy);
+
+		// slot이 없으면(배열이 가득 참) 그림자 없이 비춘다
+		ID3D11DepthStencilView* SliceDSV = SpotMaps.GetSliceDSV(Spot->GetShadowSlot());
+		if (!SliceDSV)
+			continue;
+
+		// 이 Spot의 slice 한 장만 지우고 바인딩한다 (컬러 타깃 없음)
+		Context->ClearDepthStencilView(SliceDSV, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+		Context->OMSetRenderTargets(0, nullptr, SliceDSV);
+		RenderCommand::SetViewport(0, 0, SpotShadowMapSize, SpotShadowMapSize);
+
+		// b0만 이 Spot의 원근 VP로 바꿔 그린다
+		Renderer->RenderShadowDepth(Spot->GetShadowViewProj());
+	}
+	// 메인 패스에서 SRV(t13)로 읽기 전에 DSV를 풀어 둔다
+	Context->OMSetRenderTargets(0, nullptr, nullptr);
+
+
 }
 
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
