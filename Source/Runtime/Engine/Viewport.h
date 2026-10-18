@@ -26,6 +26,8 @@ public:
     const FRenderingInfo& GetRenderingInfo() const { return ViewTargets.RenderingInfo; }
     const FRenderingInfo& GetSceneRenderingInfo() const { return ViewTargets.SceneRenderingInfo; }
     FTileLightCullingResources& GetLightCullingResources() { return ViewTargets.LightCulling; }
+    FTexture2D* EnsureDirectionalShadowMap(uint32 Size) { return ViewTargets.EnsureDirectionalShadowMap(Size); }
+    FTexture2D* GetDirectionalShadowMap() const { return ViewTargets.DirectionalShadowMap.get(); }
     FTexture2D* GetFxaaTarget() const { return ViewTargets.FxaaTarget.get(); }
     FTexture2D* GetColorTarget() const { return ViewTargets.ColorTarget.get(); }
 

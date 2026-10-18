@@ -35,6 +35,12 @@
 
 #include "Core/EngineLog.h"
 #include "Core/Stats/LightweightStats.h"
+#include "Math/EngineMath.h"
+#include "Engine/LightSceneProxy.h"
+
+#include <algorithm>
+#include <cfloat>
+#include <cmath>
 
 namespace
 {
@@ -42,6 +48,134 @@ namespace
 	DECLARE_CYCLE_STAT("World Tick", STAT_WorldTick);
 	DECLARE_CYCLE_STAT("Editor Tick", STAT_EditorTick);
 	DECLARE_CYCLE_STAT("ImGui", STAT_ImGui);
+
+	// 그림자 깊이 텍스처 한 변의 텍셀 수와, 카메라에서 그림자를 담는 최대 거리
+	constexpr uint32 DirectionalShadowMapSize = 1024;
+	constexpr float DirectionalShadowDistance = 30.0f;
+
+	// AABB를 단위 축에 투영한 [중심 - 반폭, 중심 + 반폭]으로 범위를 넓힌다.
+	void ExpandOnAxis(const FAABB& Bounds, const FVector& Axis, float& InOutMin, float& InOutMax)
+	{
+		const float Center = Bounds.Center.Dot(Axis);
+		const float Half = std::fabs(Bounds.Extent.X * Axis.X) + std::fabs(Bounds.Extent.Y * Axis.Y) + std::fabs(Bounds.Extent.Z * Axis.Z);
+		InOutMin = std::min(InOutMin, Center - Half);
+		InOutMax = std::max(InOutMax, Center + Half);
+	}
+
+	// 카메라 절두체(그림자 거리까지)를 빛 방향으로 감싸는 직교 VP를 만든다.
+	// 옆면은 절두체 꼭짓점, far는 절두체와 보이는 물체 중 가까운 쪽, near는 빛 쪽 기둥 안 물체의 끝이다.
+	bool BuildDirectionalShadowViewProjection(const FSceneView& View, const FVector& LightDirection, const TArray<FAABB>& SceneBounds, const TArray<FAABB>& VisibleBounds, FMatrix& OutLightViewProj)
+	{
+		// 직교 View는 렌더 위치와 깊이 범위를 따로 늘려 쓰므로 아직 지원하지 않는다.
+		if (View.IsOrthographic() || VisibleBounds.Num() == 0)
+			return false;
+		const FVector L = LightDirection.GetSafeNormal();
+
+		//씬에 Directional Light가 있는지 확인
+		if (L.Dot(L) < 0.5f)
+			return false;
+
+		//빛이 위에서 아래로 쬐어지면 World Normal과 수직이므로 R 이 0벡터가되므로 방지
+		const FVector WorldUp = std::fabs(L.Z) > 0.99f ? FVector(1.0f, 0.0f, 0.0f) : FVector(0.0f, 0.0f, 1.0f);
+
+		//빛은 Roll에 대한 회전이 없으므로 WorldUp과 외적해서 R을 구해도됨
+		const FVector R = FVector::Cross(WorldUp, L).GetSafeNormal();
+		//진짜 Up Vector를 구함
+		const FVector U = FVector::Cross(L, R);
+
+		// 절두체 꼭짓점: 엔진 원근 투영은 수직 FOV이고 가로는 Aspect배다.
+
+		//카메라의 투영을 가져옴
+		const FCameraProjection& Projection = View.ProjectionSettings;
+		//종횡비
+		const float Aspect = View.ViewRect.Width / View.ViewRect.Height;
+
+		//Fov 절반을 라디안으로 변환 후 높이 / 밑변인 tan(theta)값으로 변환
+		const float TanHalfFov = std::tan(FMath::DegreesToRadians(Projection.FovDegrees) * 0.5f);
+
+		//Near까지의 거리와 Far까지의 거리
+		const float Distances[2] = { Projection.NearClip, std::min(Projection.FarClip, DirectionalShadowDistance) };
+
+		//각 축의 min,max를 구해야함
+		float MinR = FLT_MAX, MaxR = -FLT_MAX;
+		float MinU = FLT_MAX, MaxU = -FLT_MAX;
+		float MinD = FLT_MAX, MaxD = -FLT_MAX;
+
+		//near,far 면의 꼭짓점구하는 루프
+		for (const float Distance : Distances)
+		{
+			const float HalfHeight = Distance * TanHalfFov;
+			const float HalfWidth = HalfHeight * Aspect;
+			for (int32 Corner = 0; Corner < 4; ++Corner)
+			{
+				const FVector P = View.CameraLocation + View.CameraForward * Distance
+					+ View.CameraRight * ((Corner & 1) ? HalfWidth : -HalfWidth)
+					+ View.CameraUp * ((Corner & 2) ? HalfHeight : -HalfHeight);
+
+				//각 꼭짓점의 min max를 구한다.
+				MinR = std::min(MinR, P.Dot(R)); MaxR = std::max(MaxR, P.Dot(R));
+				MinU = std::min(MinU, P.Dot(U)); MaxU = std::max(MaxU, P.Dot(U));
+				MinD = std::min(MinD, P.Dot(L)); MaxD = std::max(MaxD, P.Dot(L));
+			}
+		}
+
+
+
+		//보이는 물체가 절두체보다 먼저 끝나는 경우 far를 당겨준다.
+		float VisibleMinD = FLT_MAX, VisibleMaxD = -FLT_MAX;
+		for (const FAABB& Bounds : VisibleBounds)
+			ExpandOnAxis(Bounds, L, VisibleMinD, VisibleMaxD);
+		MaxD = std::min(MaxD, VisibleMaxD);
+
+		// near: 옆면 안(빛 방향 기둥)에 걸치는 물체는 화면 밖이어도 화면에 그림자를 드리울 수 있다.
+		for (const FAABB& Bounds : SceneBounds)
+		{
+			float BoundsMinR = FLT_MAX, BoundsMaxR = -FLT_MAX, BoundsMinU = FLT_MAX, BoundsMaxU = -FLT_MAX;
+			ExpandOnAxis(Bounds, R, BoundsMinR, BoundsMaxR);
+			ExpandOnAxis(Bounds, U, BoundsMinU, BoundsMaxU);
+			//빛 박스 안에있는지 판단
+			if (BoundsMaxR < MinR || BoundsMinR > MaxR || BoundsMaxU < MinU || BoundsMinU > MaxU)
+				continue;
+
+			float BoundsMinD = FLT_MAX, BoundsMaxD = -FLT_MAX;
+			ExpandOnAxis(Bounds, L, BoundsMinD, BoundsMaxD);
+
+			// far 뒤에있는 물체 처리
+			if (BoundsMinD > MaxD)
+				continue;  
+
+			//L축에서 가장 작은값 추출
+			MinD = std::min(MinD, BoundsMinD);
+		}
+
+		//추출 완료 이제 행렬만들차례
+		const float Width = std::max(MaxR - MinR, 0.01f);
+		const float Height = std::max(MaxU - MinU, 0.01f);
+		const float Depth = MaxD - MinD;
+		if (!(Depth > 0.01f))
+			return false;
+
+		// 가상 광원은 near 면 가운데에 둔다. 깊이 0이 near, Depth가 far다.
+		const FVector Eye = R * ((MinR + MaxR) * 0.5f) + U * ((MinU + MaxU) * 0.5f) + L * MinD;
+
+		// View 카메라와 같은 조합
+		FMatrix Rotation = FMatrix::Identity;
+		Rotation.M[0][0] = L.X; Rotation.M[0][1] = L.Y; Rotation.M[0][2] = L.Z;
+		Rotation.M[1][0] = R.X; Rotation.M[1][1] = R.Y; Rotation.M[1][2] = R.Z;
+		Rotation.M[2][0] = U.X; Rotation.M[2][1] = U.Y; Rotation.M[2][2] = U.Z;
+		const FMatrix LightView = FMatrix::MakeTranslation(-Eye) * Rotation.GetTransposed();
+
+		// Proj 행렬 생성(직교 행렬)
+		const FMatrix LightProjection(
+			0.0f, 0.0f, 1.0f / Depth, 0.0f,
+			2.0f / Width, 0.0f, 0.0f, 0.0f,
+			0.0f, 2.0f / Height, 0.0f, 0.0f,
+			0.0f, 0.0f, 0.0f, 1.0f);
+
+		OutLightViewProj = LightView * LightProjection;
+		return true;
+	}
+
 }
 
 #include "Core/SplashScreen.h"
@@ -539,8 +673,36 @@ FWorldContext* UEditorEngine::GetPIEWorldContext(int32 WorldPIEInstance)
 	return nullptr;
 }
 
+// 정렬된 불투명 패킷으로 Directional Light 기준 깊이를 그린다. RenderQueueSorting 뒤, RenderOpaquePass 앞에 호출한다.
+void UEditorEngine::RenderShadowPass(FViewport& Viewport, UWorld& ViewWorld, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight)
+{
+	//1. Directional Light 기준 VP 생성: 절두체가 옆면·far를, 빛 쪽 기둥 안의 물체가 near를 정한다.
+	FSceneRenderData& Data = Viewport.GetSceneRenderData();
+	FDirectionalShadowView& Shadow = Data.DirectionalShadow;
+	Shadow.bValid = BuildDirectionalShadowViewProjection(View, DirectionalLight.Direction, Data.SceneBounds, Data.VisibleBounds, Shadow.LightViewProj);
+
+
+	//2. VP 기반 depth 텍스처 생성
+	FTexture2D* DirectionalShadowMap = Shadow.bValid ? Viewport.EnsureDirectionalShadowMap(DirectionalShadowMapSize) : nullptr;
+	if (!DirectionalShadowMap)
+		Shadow.bValid = false;
+	if (Shadow.bValid)
+	{
+		FRenderingInfo ShadowInfo{};
+		ShadowInfo.ViewportSetting.Width = DirectionalShadowMapSize;
+		ShadowInfo.ViewportSetting.Height = DirectionalShadowMapSize;
+		ShadowInfo.DepthStencil.Texture = DirectionalShadowMap;
+		RenderCommand::BeginRenderPass(ShadowInfo);
+		RenderCommand::SetRasterizerState(ERasterizerState::ShadowDepth);
+		RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		Renderer->RenderShadowDepth(Shadow.LightViewProj);
+		RenderCommand::EndRenderPass(ShadowInfo);
+	}
+}
+
 // 입력 View의 Ray와 피킹으로 Gizmo·공유 선택을 갱신한다.
-void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, FRenderQueue& RenderQueue, const FDirectionalLightInfo& DirectionalLight)
+// 렌더 큐 정렬은 RenderFrame이 이 Pass 전에 마친다.
+void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& ViewRenderingInfo, const FSceneView& View, const FDirectionalLightInfo& DirectionalLight)
 {
 	const FMatrix& ViewProjection = View.ViewProjection;
 	const FVector ViewCameraLocation = View.GetCameraLocation();
@@ -552,8 +714,7 @@ void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& 
     const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
     const bool bDepthPrepass = bDrawPrimitives && ViewRenderMode.ViewMode == EViewMode::Lit;
     Renderer->SetViewMode(ViewRenderMode);
-    if (bDrawPrimitives)
-        Renderer->RenderQueueSorting(RenderQueue, ViewProjection, ViewCameraLocation);
+
     if (bDepthPrepass)
     {
         FRenderingInfo DepthInfo = ViewRenderingInfo;
@@ -591,12 +752,15 @@ void UEditorEngine::RenderOpaquePass(FViewport& Viewport, const FRenderingInfo& 
 		RenderCommand::SetDepthStencilState(EDepthStencilState::Default);
 
 		RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+
 		// 불투명을 먼저 그리고 반투명을 먼 것부터 그린다.
 		// Grid는 깊이를 쓰지 않는 반투명 위에도 겹칠 수 있지만, 언리얼의 에디터 프리미티브처럼 Overlay Pass에서 마지막에 합성한다.
 		Renderer->RenderOpaque(ViewProjection, bDepthPrepass);
 		Renderer->RenderTranslucent(ViewProjection);
 		// 장면 Wireframe이 Grid·Gizmo·UI로 전파되지 않도록 복원한다.
 		RenderCommand::SetRasterizerState(ERasterizerState::SolidBack);
+
 	}
 
 
@@ -881,8 +1045,17 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
 	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
+	
+	const bool bDrawPrimitives = SettingsPanel->GetSettings().bDrawPrimitives;
+	if (bDrawPrimitives)
+		Renderer->RenderQueueSorting(RenderQueue, ViewProjection, ViewCameraLocation);
+
+	// 0. Shadow Pass: 조명을 계산하는 Lit 뷰에서만 그린다.
+	if (bDrawPrimitives && View.RenderMode.ViewMode == EViewMode::Lit)
+		RenderShadowPass(Viewport, ViewWorld, SceneRenderingInfo, View, Lighting.Directional);
+
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
-	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
+	RenderOpaquePass(Viewport, SceneRenderingInfo, View, Lighting.Directional);
 
 	if (SettingsPanel->GetSettings().bDepthView)
 	{

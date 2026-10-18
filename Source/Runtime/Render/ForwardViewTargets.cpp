@@ -52,9 +52,29 @@ void FForwardViewTargets::BuildViewRenderingInfos(FRenderingInfo& OutSceneInfo, 
 	OutViewInfo.DepthStencil.Texture = Depth;
 }
 
+FTexture2D* FForwardViewTargets::EnsureDirectionalShadowMap(const uint32 Size)
+{
+	if (DirectionalShadowMap && DirectionalShadowMapSize == Size) return DirectionalShadowMap.get();
+	D3D11_TEXTURE2D_DESC Desc{};
+	Desc.Width = Size;
+	Desc.Height = Size;
+	Desc.MipLevels = 1;
+	Desc.ArraySize = 1;
+	// 셰이더에서 비교해 읽어야 하므로 DSV와 SRV를 둘 다 만들 수 있는 TYPELESS로 만든다
+	Desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+	Desc.SampleDesc.Count = 1;
+	Desc.Usage = D3D11_USAGE_DEFAULT;
+	Desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+	DirectionalShadowMap = RenderCommand::CreateTexture2D(Desc);
+	DirectionalShadowMapSize = DirectionalShadowMap ? Size : 0;
+	return DirectionalShadowMap.get();
+}
+
 void FForwardViewTargets::Reset()
 {
 	LightCulling.Reset();
+	DirectionalShadowMap.reset();
+	DirectionalShadowMapSize = 0;
 	SceneRenderingInfo = {};
 	RenderingInfo = {};
 	SceneColorTarget.reset();

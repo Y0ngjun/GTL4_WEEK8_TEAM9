@@ -118,8 +118,15 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
     auto& SortedParticleIds = Data.SortedParticleIds;
     // 기존 순서와 AABB/절두체 검사를 그대로 사용한다.
     for (const FRenderableObject& Object : RenderObjects)
+    {
+        Data.SceneBounds.Add(Object.WorldBounds);
         if (IsAABBInFrustum(Object.WorldBounds, View.Frustum))
+        {
             Data.VisibleIds.Add(Object.Id);
+            Data.VisibleBounds.Add(Object.WorldBounds);
+        }
+    }
+
     const FLODViewContext LODContext = View.MakeLODContext();
     for (const uint32 Id : Data.VisibleIds)
     {
@@ -159,6 +166,8 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
                 const FVector Delta = Particle.Location - CameraLocation;
                 ParticleComponent->SubmitParticleToRenderQueue(OutQueue, ParticleIndex, ParticleWorld, Delta.Dot(Delta));
             }
+
+
         }
         else if (UBillboardComponent* Billboard = Cast<UBillboardComponent>(Primitive))
         {
@@ -186,4 +195,6 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
     SelectLODs(LODInputs, LODContext, SelectedLODs);
     for (uint32 I = 0; I < static_cast<uint32>(PendingStaticMeshes.Num()); ++I)
         PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
+
+
 }
