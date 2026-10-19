@@ -10,7 +10,7 @@ class UPointLightComponent : public ULightComponent
 	REFLECT_END()
 
 public:
-	UPointLightComponent() = default;
+	UPointLightComponent();
 	virtual ~UPointLightComponent() override = default;
 
 	float GetAttenuationRadius() const { return AttenuationRadius; }

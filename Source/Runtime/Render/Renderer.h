@@ -10,6 +10,22 @@
 #include "Occlusion/GPUOcclusion.h"
 #include "TileLightCulling.h"
 #include "LocalLight.h"
+#include "ShadowResources.h"
+
+struct FShadowFrameData;
+struct FShadowRequestPerLight;
+struct FShadowDepthPassInfo;
+
+// Directional의 기존 Depth 셰이더와 b0 크기를 공유하되, 별도 버퍼에 올린다.
+struct FShadowDepthPassConstants
+{
+	FMatrix ViewProjection;
+	FVector LightPosition{};
+	float InvRadius = 0.0f;
+};
+static_assert(sizeof(FShadowDepthPassConstants) == 80);
+static_assert(offsetof(FShadowDepthPassConstants, LightPosition) == 64);
+static_assert(offsetof(FShadowDepthPassConstants, InvRadius) == 76);
 
 constexpr uint32 ObjectSlotBytes = 256;
 
@@ -17,7 +33,11 @@ struct FPerObjectConstants
 {
 	FMatrix World;
 	FMatrix NormalMatrix;
+	uint32 bReceiveShadow = 0;
+	uint32 Padding[3] = {};
 };
+static_assert(sizeof(FPerObjectConstants) == 144);
+static_assert(offsetof(FPerObjectConstants, bReceiveShadow) == 128);
 static_assert(sizeof(FPerObjectConstants) <= ObjectSlotBytes);
 
 struct FViewConstants
@@ -30,11 +50,13 @@ static_assert(sizeof(FViewConstants) == 80, "HLSL b0 레이아웃(matrix + float
 
 inline FMatrix MakeNormalMatrix(const FMatrix& World) { return World.Inverse().GetTransposed(); }
 
-inline void WriteObjectSlot(uint8* SlotBase, uint32 Slot, const FMatrix& World, const FMatrix& NormalMatrix)
+inline void WriteObjectSlot(uint8* SlotBase, uint32 Slot, const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = false)
 {
 	uint8* Dest = SlotBase + static_cast<size_t>(Slot) * ObjectSlotBytes;
 	std::memcpy(Dest + offsetof(FPerObjectConstants, World), &World, sizeof(FMatrix));
 	std::memcpy(Dest + offsetof(FPerObjectConstants, NormalMatrix), &NormalMatrix, sizeof(FMatrix));
+	const uint32 Receive = bReceiveShadow ? 1u : 0u;
+	std::memcpy(Dest + offsetof(FPerObjectConstants, bReceiveShadow), &Receive, sizeof(Receive));
 }
 
 struct FSortEntry
@@ -67,6 +89,13 @@ class FRenderer
 {
 public:
 	bool Init();
+	uint32 AllocateShadowResources(bool bEditorWorld);
+	void ReleaseShadowResources(uint32 Index);
+	const FShadowResources* GetShadowResources(uint32 Index) const;
+	bool RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame, uint32 Resolution = DefaultShadowResolution);
+
+	// 매 View 호출한다. 비지원/실패 시 입력을 비워 이전 World의 바인딩을 남기지 않는다.
+	bool BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported);
 
 	void SetViewMode(const FViewRenderMode& Mode);
 	void SetLighting(const FLightingConstants& GlobalLights, const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights);
@@ -80,6 +109,11 @@ public:
 	// 큐를 정렬해 불투명 패킷만 그린다. 반투명은 RenderTranslucent 호출 전까지 보관한다.
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
+
+	// Pass 1: 한 면을 Clear하고 그린다.
+	// 호출자가 Pass.RequestIndex를 검사하고 해당 Request를 전달한다.
+	// false면 해당 그림자를 셰이딩에 사용하지 않는다.
+	bool DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -106,6 +140,8 @@ public:
 	void CullLights(FTileLightCullingResources& Resources, const FMatrix& Projection, FTexture2D* Depth, const TArray<FCullingLight>& Lights, uint32 Width, uint32 Height, bool bVisualizeLightCount);
 
 private:
+	std::array<TUniquePtr<FShadowResources>, MaxShadowResourceSlots> WorldShadowResources;
+	uint32 NextShadowResourceIndex = 1;
 	// FIFO 소비용 배열의 용량만 재사용하며 매 View의 패킷 값은 새로 채운다.
 	FRenderQueue RenderPackets;
 	// 정렬된 RenderPackets에서 반투명 패킷이 시작되는 위치
@@ -113,9 +149,11 @@ private:
 	uint32 FirstMaterialIndex = 0;
 	TUniquePtr<FConstantBuffer> PerObjectCB;
 	TUniquePtr<FConstantBuffer> ViewCB;
+	TUniquePtr<FConstantBuffer> ShadowDepthPassCB;
 	TUniquePtr<FConstantBuffer> LightingCB;
 	TUniquePtr<FConstantBuffer> TileShadingCB;
 	FShaderProgram* DepthShader = nullptr;
+	FShaderProgram* ShadowDistanceShader = nullptr;
 
 	// 모든 패킷의 World 행렬을 256바이트 칸에 한 번에 올린 버퍼. D3D11.1 오프셋 바인딩을 못 쓰면 PerObjectCB로 돌아간다.
 	TUniquePtr<FConstantBuffer> PerObjectSlotCB;
@@ -138,7 +176,7 @@ private:
 
 	void DrawPackets(uint32 Begin, uint32 End, const FMatrix& ViewProjection, ESceneMeshPass Pass = ESceneMeshPass::Color);
 	void DrawStaticGroups(ESceneMeshPass Pass = ESceneMeshPass::Color);
-	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix);
+	void UpdatePerObjectConstants(const FMatrix& World, const FMatrix& NormalMatrix, bool bReceiveShadow = false);
 
 	// 이번 프레임 스태틱 메시 묶음 (정렬 키 순). 비어 있지 않은 것만 담는다.
 	std::vector<const FStaticDrawGroup*> StaticGroups;

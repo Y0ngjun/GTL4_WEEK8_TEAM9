@@ -71,6 +71,13 @@ bool UPrimitiveComponent::LineTraceComponent(const FRay& WorldRay, FHitResult& O
 	return Mesh && TraceMesh(WorldRay, *Mesh, GetWorldMatrix(), OutHit);
 }
 
+void UPrimitiveComponent::PostEditChangeProperty(const FProperty& Property)
+{
+	Super::PostEditChangeProperty(Property);
+	if (Property.Name == "bVisible" || Property.Name == "bCastShadow" || Property.Name == "bReceiveShadow")
+		MarkRenderStateDirty();
+}
+
 void UPrimitiveComponent::MarkRenderStateDirty()
 {
 	if (SceneProxy)

@@ -1,6 +1,10 @@
 #include "EnginePCH.h"
 #include "Editor/Details/DetailsPanel.h"
 
+#include "Render/ShadowResources.h"
+#include "Render/RenderCommand.h"
+#include "Component/LightComponent.h"
+#include <d3dcompiler.h>
 #include "imgui_internal.h"
 #include "Editor/HitoriEd/EditorDragDrop.h"
 #include "Editor/HitoriEd/EditorResourcePaths.h"
@@ -996,6 +1000,7 @@ void FDetailsPanel::OnRender()
 			ImGui::PushID(TargetComponent);
 			ImGui::SeparatorText("Component Properties");
 			DrawProperties(TargetComponent, CustomFont);
+            if (auto* Light = Cast<ULightComponent>(TargetComponent)) DrawShadowPreview(Light);
 
 			if(SelectCandidateComponent != TargetComponent)
 			{
@@ -1244,4 +1249,73 @@ void FDetailsPanel::TryReparent(USceneComponent* DroppedComponent, USceneCompone
 FDetailsPanel::~FDetailsPanel()
 {
 	//delete transform;
+}
+void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
+{
+    if (!ImGui::CollapsingHeader("Shadow Map Preview")) return;
+    const FShadowResources* Resources = ShadowPreviewQuery ? ShadowPreviewQuery(Light) : nullptr;
+    const FShadowPreviewEntry* Entry = nullptr;
+    if (Resources)
+        for (const FShadowPreviewEntry& Candidate : Resources->PreviewEntries)
+            if (Candidate.LightId == Light->GetUUID()) { Entry = &Candidate; break; }
+    if (!Entry)
+    {
+        ImGui::TextDisabled("No shadow map rendered for this light.");
+        return;
+    }
+    const bool PreviewArray = Entry->bCube;
+    const uint32 PreviewIndex = Entry->ShadowMapIndex;
+    if (PreviewArray) ImGui::Combo("Face", &PreviewFace, "+X\0-X\0+Y\0-Y\0+Z\0-Z\0");
+    const FTexture* Source = PreviewArray ? static_cast<const FTexture*>(Resources->DepthCube.get()) : Resources->Depth2D.get();
+    ID3D11Device* Device = RenderCommand::GetDevice();
+    ID3D11DeviceContext* Context = RenderCommand::GetContext();
+    if (!PreviewShader)
+    {
+        ComPtr<ID3DBlob> Code, Errors;
+        if (FAILED(D3DCompileFromFile(L"Resources/Shader/ShadowPreview.hlsl", nullptr, nullptr, "mainPS", "ps_5_0", 0, 0, Code.GetAddressOf(), Errors.GetAddressOf())) ||
+            FAILED(Device->CreatePixelShader(Code->GetBufferPointer(), Code->GetBufferSize(), nullptr, PreviewShader.GetAddressOf())))
+        {
+            ImGui::TextDisabled("Shadow preview shader could not be created.");
+            return;
+        }
+    }
+    D3D11_TEXTURE2D_DESC Desc{};
+    if (PreviewTexture) PreviewTexture->GetDesc(&Desc);
+    if (!PreviewTexture || Desc.Width != Source->GetWidth() || Desc.Height != Source->GetHeight())
+    {
+        PreviewSRV.Reset();
+        PreviewTexture.Reset();
+        Desc = {};
+        Desc.Width = Source->GetWidth();
+        Desc.Height = Source->GetHeight();
+        Desc.MipLevels = Desc.ArraySize = Desc.SampleDesc.Count = 1;
+        Desc.Format = DXGI_FORMAT_R32_TYPELESS;
+        Desc.Usage = D3D11_USAGE_DEFAULT;
+        Desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SHADER_RESOURCE_VIEW_DESC View{};
+        View.Format = DXGI_FORMAT_R32_FLOAT;
+        View.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        View.Texture2D.MipLevels = 1;
+        if (FAILED(Device->CreateTexture2D(&Desc, nullptr, PreviewTexture.GetAddressOf())) ||
+            FAILED(Device->CreateShaderResourceView(PreviewTexture.Get(), &View, PreviewSRV.GetAddressOf())))
+        {
+            PreviewTexture.Reset();
+            ImGui::TextDisabled("Shadow preview texture could not be created.");
+            return;
+        }
+    }
+    const uint32 Slice = PreviewArray ? PreviewIndex * FTextureCubeArray::FaceCount + PreviewFace : PreviewIndex;
+    // UI는 Texture2D를 받으므로 배열의 선택한 한 장만 복사한다. 원본은 소유하지 않는다.
+    ID3D11ShaderResourceView* NullSRV = nullptr;
+    Context->PSSetShaderResources(0, 1, &NullSRV);
+    Context->CopySubresourceRegion(PreviewTexture.Get(), 0, 0, 0, 0, Source->GetRawPtr(), Slice, nullptr);
+    ImGui::TextDisabled("Depth: black = 0, white = 1 (clear)");
+    const float Size = std::max(1.0f, std::min(320.0f, ImGui::GetContentRegionAvail().x));
+    ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd* Command)
+    {
+        auto* Panel = static_cast<FDetailsPanel*>(Command->UserCallbackData);
+        RenderCommand::GetContext()->PSSetShader(Panel->PreviewShader.Get(), nullptr, 0);
+    }, this);
+    ImGui::Image((ImTextureID)PreviewSRV.Get(), ImVec2(Size, Size));
+    ImGui::GetWindowDrawList()->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }

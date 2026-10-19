@@ -41,6 +41,11 @@ struct FRenderingDesc
 	ERenderTargetLoadOp  LoadOp = ERenderTargetLoadOp::Clear;
 	ERenderTargetStoreOp StoreOp = ERenderTargetStoreOp::Store;
 	FClearValue ClearValue = FClearValue();
+
+	// Texture를 지정하지 않아도 Depth Pass를 수행할 수 있도록 DSV를 직접 받는다.
+	// 비소유 참조이며 Texture의 DSV보다 우선한다.
+	ID3D11DepthStencilView* DSV = nullptr;
+	uint32 ClearFlags = D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL;
 };
 
 struct FRenderingInfo

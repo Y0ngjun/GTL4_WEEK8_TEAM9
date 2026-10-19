@@ -14,6 +14,8 @@ struct FWorldContext
 {
 	EWorldType WorldType;
 	FName ContextHandle;
+	// Renderer 소유 World별 그림자 자원 슬롯의 비소유 번호. 저장/복제하지 않는다.
+	uint32 ShadowResourceIndex = InvalidShadowResourceIndex;
 
 	void SetCurrentWorld(UWorld* World);
 

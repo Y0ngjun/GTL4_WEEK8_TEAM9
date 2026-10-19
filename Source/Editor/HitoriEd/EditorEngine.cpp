@@ -228,6 +228,15 @@ bool UEditorEngine::Init()
 
 	SettingsPanel->SetWorld(GetActiveWorld());
 	SettingsPanel->SetViewportsPanel(ViewportsPanel);
+    DetailsPanel->SetShadowPreviewQuery([this](ULightComponent* Light) -> const FShadowResources*
+    {
+        UWorld* PreviewWorld = Light->GetOwner() ? Light->GetOwner()->GetWorld() : nullptr;
+        if (!PreviewWorld) return nullptr;
+        const FWorldContext* Context = GetWorldContextFromWorld(PreviewWorld);
+        if (!Context) return nullptr;
+        const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
+        return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber() ? Resources : nullptr;
+    });
 	SettingsPanel->SetHasLitViewQuery([this]()
 	{
 		for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
@@ -877,9 +886,32 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	FLightingConstants Lighting;
 	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
-	ViewWorld.GetScene().BuildLightingConstants(Lighting);
-	ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix);
-	Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
+	// 지원 View만 공유 그림자를 요청한다. 비지원 View는 다른 View의 결과를 지우지 않는다.
+    const FEditorSettings& ShadowSettings = SettingsPanel->GetSettings();
+    const bool bSupportsShadows = View.RenderMode.ViewMode == EViewMode::Lit && View.RenderMode.ShadingModel == EShadingModel::Phong && ShadowSettings.bDrawPrimitives 
+																&& !ShadowSettings.bDepthView && !ShadowSettings.bVisualizeTileLightCount;
+    uint32 ShadowResourceIndex = InvalidShadowResourceIndex;
+    const FShadowFrameData* ShadowFrame = nullptr;
+    if (bSupportsShadows)
+    {
+        if (FWorldContext* Context = GetWorldContextFromWorld(&ViewWorld))
+        {
+            if (Context->ShadowResourceIndex == InvalidShadowResourceIndex)
+                Context->ShadowResourceIndex = Renderer->AllocateShadowResources(Context->WorldType == EWorldType::Editor);
+            ShadowResourceIndex = Context->ShadowResourceIndex;
+            ShadowFrame = SceneRenderer.PrepareWorldShadows(ViewWorld, ShadowResourceIndex);
+            if (ShadowFrame)
+                Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame);
+        }
+    }
+    const bool bReadyForShading = Renderer->BindShadowResources(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);
+    // 셰이딩 준비가 성공한 경우에만 기존 요청 배열을 비소유 참조로 전달한다.
+    const TArray<FShadowRequestPerLight>* ShadowRequests = bReadyForShading && ShadowFrame ? &ShadowFrame->ShadowRequestsPerLight : nullptr;
+    ViewWorld.GetScene().BuildLightingConstants(Lighting, ShadowRequests);
+    ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix, ShadowRequests);
+    Lighting.bReadyForShading = bReadyForShading ? 1u : 0u;
+    Lighting.NumShadowInfos = bReadyForShading ? Renderer->GetShadowResources(ShadowResourceIndex)->NumShadowInfos : 0u;
+    Renderer->SetLighting(Lighting, Data.PointLights, Data.SpotLights);
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
@@ -967,6 +999,8 @@ void UEditorEngine::PreExit()
 	EndPlayMap();
 	DestroyPIEWindow();
 	SceneRenderer.EndFrame();
+	for (FWorldContext& Context : WorldList)
+		ReleaseWorldShadowResources(Context.World());
 	ViewportsPanel->Shutdown();
 	ImGuiRenderer->Shutdown();
 }
@@ -1067,6 +1101,7 @@ void UEditorEngine::StartPlayInEditorSession()
 UWorld* UEditorEngine::CreatePIEWorldByDuplication(FWorldContext& PIEContext, UWorld* InEditorWorld)
 {
 	UWorld* NewPIEWorld = UWorld::GetDuplicatedWorldForPIE(InEditorWorld);
+	if (PIEContext.World()) ReleaseWorldShadowResources(PIEContext.World());
 	PIEContext.SetCurrentWorld(NewPIEWorld);
 	return NewPIEWorld;
 }
@@ -1098,6 +1133,7 @@ void UEditorEngine::EndPlayMap()
     PIEPanel.reset();
 	DestroyPIEWindow();
 	PlayWorld->EndPlay();
+	ReleaseWorldShadowResources(PlayWorld);
 	PlayWorld->ClearWorld();
 	DestroyWorldContext(PlayWorld);
 	delete PlayWorld;
@@ -1214,6 +1250,7 @@ void UEditorEngine::CreateNewScene()
 	}
 	for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
 		ViewportsPanel->GetViewport(Index)->ClearSceneData();
+	ReleaseWorldShadowResources(EditorWorld);
 	if (!FEditorFileUtils::NewScene(EditorWorld))
 		return;
 
@@ -1230,6 +1267,7 @@ void UEditorEngine::OpenScene()
 	}
 	for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
 		ViewportsPanel->GetViewport(Index)->ClearSceneData();
+	ReleaseWorldShadowResources(EditorWorld);
 	if (!FEditorFileUtils::LoadScene(EditorWorld))
 		return;
 
@@ -1256,4 +1294,15 @@ void UEditorEngine::SaveSceneAs()
 		return;
 	}
 	FEditorFileUtils::SaveSceneAs(EditorWorld);
+}
+
+void UEditorEngine::ReleaseWorldShadowResources(UWorld* World)
+{
+    if (!World) return;
+    FWorldContext* Context = GetWorldContextFromWorld(World);
+    if (!Context) return;
+    // CPU의 비소유 참조를 먼저 끊고 GPU 자원 슬롯을 반환한다.
+    SceneRenderer.ReleaseWorldShadows(Context->ShadowResourceIndex);
+    Renderer->ReleaseShadowResources(Context->ShadowResourceIndex);
+    Context->ShadowResourceIndex = InvalidShadowResourceIndex;
 }

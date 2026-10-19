@@ -2,6 +2,14 @@
 #include "PointLightComponent.h"
 #include "Engine/LightSceneProxy.h"
 
+UPointLightComponent::UPointLightComponent()
+{
+    // Spot과 동일한 거리 깊이 비교에 사용할 월드 거리 초기값.
+    ShadowBias = 0.001f;
+    ShadowSlopeBias = 0.01f;
+    ShadowMaxSlope = 2.0f;
+}
+
 void UPointLightComponent::PostEditChangeProperty(const FProperty& Property)
 {
 	Super::PostEditChangeProperty(Property);

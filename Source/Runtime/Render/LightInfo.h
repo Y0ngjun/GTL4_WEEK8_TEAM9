@@ -2,6 +2,13 @@
 
 #include "Math/Vector.h"
 
+enum class ELightType : uint8
+{
+	Ambient, Directional, Point, Spot,
+};
+
+inline constexpr uint32 InvalidShadowIndex = ~0u;
+
 // UberLit.hlsl의 MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS
 constexpr uint32 MaxPointLights = 4;
 constexpr uint32 MaxSpotLights = 4;
@@ -18,7 +25,7 @@ struct FDirectionalLightInfo
 	FVector Color;
 	float Padding0 = 0.0f;
 	FVector Direction;
-	float Padding1 = 0.0f;
+	uint32 ShadowIndex = InvalidShadowIndex;
 };
 
 struct FPointLightInfo
@@ -26,7 +33,7 @@ struct FPointLightInfo
 	FVector Color;
 	float AttenuationRadius = 0.0f;
 	FVector Position;
-	float Padding = 0.0f;
+	uint32 ShadowIndex = InvalidShadowIndex;
 };
 
 struct FSpotLightInfo
@@ -37,6 +44,8 @@ struct FSpotLightInfo
 	float CosInnerCone = 1.0f;
 	FVector Direction;
 	float CosOuterCone = 1.0f;
+	uint32 ShadowIndex = InvalidShadowIndex;
+	uint32 Padding[3] = {};
 };
 
 struct FLightingConstants
@@ -47,11 +56,16 @@ struct FLightingConstants
 	FSpotLightInfo SpotLights[MaxSpotLights];
 	uint32 NumPointLights = 0;
 	uint32 NumSpotLights = 0;
-	uint32 Padding[2] = {};
+	uint32 bReadyForShading = 0;
+	uint32 NumShadowInfos = 0;
 };
 
 static_assert(sizeof(FAmbientLightInfo) == 16);
 static_assert(sizeof(FDirectionalLightInfo) == 32);
 static_assert(sizeof(FPointLightInfo) == 32);
-static_assert(sizeof(FSpotLightInfo) == 48);
-static_assert(sizeof(FLightingConstants) == 384);
+static_assert(sizeof(FSpotLightInfo) == 64);
+static_assert(sizeof(FLightingConstants) == 448);
+static_assert(offsetof(FDirectionalLightInfo, ShadowIndex) == 28);
+static_assert(offsetof(FPointLightInfo, ShadowIndex) == 28);
+static_assert(offsetof(FSpotLightInfo, ShadowIndex) == 48);
+static_assert(offsetof(FLightingConstants, bReadyForShading) == 440);

@@ -88,6 +88,7 @@ private:
 	void TickWorldAndEditor(float DeltaTime);
 	// 한 번 캡처한 월드 결과를 재사용해 현재 레이아웃의 각 View를 렌더한다.
 	void RenderViewports();
+	void ReleaseWorldShadowResources(UWorld* World);
 	// 현재 표시 슬롯 또는 네이티브 창 포커스로 게임 카메라 입력을 켜고 끈다.
 	void UpdatePIEInput();
 	FGameViewportClient* GetPIEGameViewportClient() const;

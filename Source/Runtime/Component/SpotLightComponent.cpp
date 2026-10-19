@@ -46,6 +46,14 @@ namespace
 	}
 }
 
+USpotLightComponent::USpotLightComponent()
+{
+    // 초기 조정 기준: 반경 10, 그림자 해상도 1024. Bias/SlopeBias는 월드 거리다.
+    ShadowBias = 0.001f;
+    ShadowSlopeBias = 0.01f;
+    ShadowMaxSlope = 2.0f;
+}
+
 void USpotLightComponent::PostEditChangeProperty(const FProperty& Property)
 {
 	Super::PostEditChangeProperty(Property);

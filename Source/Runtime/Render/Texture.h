@@ -11,6 +11,7 @@ enum class ETextureDimension : uint8
 	Texture2DArray,
 	TextureCube,
 	Texture3D,
+	TextureCubeArray,
 };
 
 class FTexture

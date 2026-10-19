@@ -9,6 +9,7 @@
 #include "Render/LightInfo.h"
 #include "Render/Renderer.h"
 
+struct FShadowRequestPerLight;
 class FLightSceneProxy;
 class ULightComponentBase;
 
@@ -36,7 +37,7 @@ public:
 	void RemoveAllLights();
 	void MarkLightDirty(FLightSceneProxy* Proxy);
 	// Ambient·Directional은 마지막으로 등록된 것 하나, Point·Spot은 MaxPointLights·MaxSpotLights개까지 담는다.
-	void BuildLightingConstants(FLightingConstants& Out) const;
+	void BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr) const;
 
 	void UpdateAllTransforms();
 
@@ -45,7 +46,7 @@ public:
 	void MarkDirty(FPrimitiveSceneProxy* Proxy);
 	void MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy);
 
-	void BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix) const;
+	void BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr) const;
 
 	TArray<FPrimitiveSceneProxy*> Proxies;
 	TArray<FPrimitiveSceneProxy*> DirtyProxies;

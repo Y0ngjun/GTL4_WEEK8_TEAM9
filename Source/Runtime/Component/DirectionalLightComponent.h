@@ -11,7 +11,7 @@ class UDirectionalLightComponent : public ULightComponent
 		REFLECT_END()
 
 public:
-	UDirectionalLightComponent() = default;
+	UDirectionalLightComponent();
 	virtual ~UDirectionalLightComponent() override = default;
 
 	FDirectionalLightInfo GetDirectionalLightInfo() const;

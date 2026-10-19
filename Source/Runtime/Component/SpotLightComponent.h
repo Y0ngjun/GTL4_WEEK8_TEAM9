@@ -13,7 +13,7 @@ class USpotLightComponent : public UPointLightComponent
 	REFLECT_END()
 
 public:
-	USpotLightComponent() = default;
+	USpotLightComponent();
 	virtual ~USpotLightComponent() override = default;
 
 	float GetInnerConeAngle() const { return InnerConeAngle; }

@@ -6,11 +6,6 @@
 
 class FScene;
 
-enum class ELightType : uint8
-{
-	Ambient, Directional, Point, Spot,
-};
-
 class FLightSceneProxy
 {
 public:
@@ -22,9 +17,26 @@ public:
 	ULightComponentBase* GetComponent() const { return Component; }
 	ELightType GetLightType() const { return Type; }
 	FScene* GetScene() const { return Scene; }
+	bool CastsShadow() const { return bCastShadow; }
+	float GetShadowBias() const { return ShadowBias; }
+	float GetShadowSlopeBias() const { return ShadowSlopeBias; }
+	float GetShadowMaxSlope() const { return ShadowMaxSlope; }
 	bool IsVisible() const { return bVisible; }
 
 protected:
+	void UpdateShadowSettings(const ULightComponent* Light)
+	{
+		bCastShadow = Light->CastsShadow();
+		ShadowBias = Light->GetShadowBias();
+		ShadowSlopeBias = Light->GetShadowSlopeBias();
+		ShadowMaxSlope = Light->GetShadowMaxSlope();
+	}
+
+	// 초기값을 false로 설정하여, Ambient에서 그림자를 생성하지 않도록 만든다.
+	bool bCastShadow = false;
+	float ShadowBias = 0.0f;
+	float ShadowSlopeBias = 0.0f;
+	float ShadowMaxSlope = 0.0f;
 	ULightComponentBase* Component = nullptr;
 	bool bVisible = true;
 
@@ -62,6 +74,7 @@ public:
 	{
 		const UDirectionalLightComponent* Light = static_cast<const UDirectionalLightComponent*>(Component);
 		Info = Light->GetDirectionalLightInfo();
+		UpdateShadowSettings(Light);
 		bVisible = Light->IsLightVisible();
 	}
 
@@ -80,6 +93,7 @@ public:
 	{
 		const UPointLightComponent* Light = static_cast<const UPointLightComponent*>(Component);
 		Info = Light->GetPointLightInfo();
+		UpdateShadowSettings(Light);
 		bVisible = Light->IsLightVisible();
 	}
 
@@ -98,6 +112,7 @@ public:
 	{
 		const USpotLightComponent* Light = static_cast<const USpotLightComponent*>(Component);
 		Info = Light->GetSpotLightInfo();
+		UpdateShadowSettings(Light);
         // Outer cone과 감쇠 반경으로 제한된 조명 범위를 감싸는 구를 계산한다.
         if (CachedRadius != Info.AttenuationRadius || CachedCosOuter != Info.CosOuterCone)
         {
