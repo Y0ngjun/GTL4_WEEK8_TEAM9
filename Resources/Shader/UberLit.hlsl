@@ -169,6 +169,9 @@ Texture2DArray<float> ShadowDepth2D : register(t13);
 TextureCubeArray<float> ShadowDepthCube : register(t14);
 SamplerState ShadowSampler : register(s1);
 
+// PCF용 비교 샘플러
+SamplerComparisonState ShadowComparisonSampler : register(s2);
+
 // 각 Light의 조회 구현에서 이 조건을 통과한 경우에만 ShadowInfos를 읽는다.
 // 미구현 Light는 CPU에서 InvalidShadowIndex를 유지한다.
 bool CanSampleShadow(uint ShadowIndex, uint ReceiveShadow)
@@ -199,6 +202,7 @@ float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 Worl
     float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
     float Bias = ComputeShadowBias(Info, GeoNormal, normalize(ToLightDirection));
     return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
+    //return ShadowDepth2D.SampleCmpLevelZero(ShadowComparisonSampler, float3(UV, Info.ShadowMapIndex), Ndc.z - Bias);
 }
 
 // Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.

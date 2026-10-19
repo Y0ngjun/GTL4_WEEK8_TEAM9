@@ -36,6 +36,7 @@ namespace
         constexpr uint32 TextureCubeArray = 14;
     }
     constexpr uint32 ShadowSamplerSlot = 1;
+    constexpr uint32 ShadowComparisonSamplerSlot = 2;
 
     struct FTileLightShadingConstants
     {
@@ -855,5 +856,6 @@ bool FRenderer::BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupp
     RenderCommand::BindShaderResource(ShadowSRVSlots::Texture2DArray, bReady && Resources->Depth2D ? Resources->Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindShaderResource(ShadowSRVSlots::TextureCubeArray, bReady && Resources->DepthCube ? Resources->DepthCube->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindSamplerState(ShadowComparisonSamplerSlot, ESamplerState::ShadowComparison, EShaderBindFlagBits::Pixel);
     return bReady;
 }

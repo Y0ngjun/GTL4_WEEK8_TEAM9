@@ -290,6 +290,17 @@ void FRenderDevice::CreateStates()
 		Desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
 
 		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::LinearWrap].GetAddressOf());
+
+		// 그림자 PCF: 2x2 텍셀을 각각 비교(Reference <= Stored)한 뒤 결과를 bilinear로 섞는다.
+		// 섀도맵 밖은 BorderColor 1(최대 깊이)로 비교되어 빛을 받는다.
+		Desc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+		Desc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+		Desc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+		Desc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+		Desc.BorderColor[0] = Desc.BorderColor[1] = Desc.BorderColor[2] = Desc.BorderColor[3] = 1.0f;
+		Desc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+
+		Device->CreateSamplerState(&Desc, SamplerStates[(uint8)ESamplerState::ShadowComparison].GetAddressOf());
 	}
 }
 
