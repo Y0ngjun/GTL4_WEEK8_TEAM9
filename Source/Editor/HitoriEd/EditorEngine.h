@@ -24,7 +24,7 @@
 #include "Editor/Details/DetailsPanel.h"
 #include "Editor/EditorControls/EditorControlsPanel.h"
 #include "Editor/Settings/SettingsPanel.h"
-#include "Editor/Debug/DebugPanel.h"
+#include "Editor/DebugTools/DebugPanel.h"
 #include "Editor/Viewports/ViewportsPanel.h"
 #include "Editor/ContentDrawer/ContentDrawerPanel.h"
 
