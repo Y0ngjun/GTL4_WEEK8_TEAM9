@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cfloat>
+#include <cstring>
 
 namespace
 {
@@ -359,6 +360,7 @@ void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& 
     if (Directional && Directional->CastsShadow())
     {
         ++Stats.LightsConsidered;
+        OutData.ConsideredLightIds.Add(Directional->GetComponent()->GetUUID());
         if (IsBlack(static_cast<const FDirectionalLightSceneProxy*>(Directional)->GetInfo().Color))
             ++Stats.LightsCulledByIntensity;
         else
@@ -395,6 +397,7 @@ void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& 
             }
 
             ++Stats.LightsConsidered;
+            OutData.ConsideredLightIds.Add(Light->GetComponent()->GetUUID());
             if (IsBlack(Color))
             {
                 ++Stats.LightsCulledByIntensity;
@@ -455,49 +458,50 @@ void FSceneRenderer::BuildShadowCasterQueue(UWorld& World, FShadowDepthPassInfo&
     }
     Queue.SetNum(Kept);
 }
-const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint32 ResourceIndex)
+
+namespace
 {
-    if (!bFrameActive || ResourceIndex >= MaxShadowResourceSlots) return nullptr;
-    FWorldShadowFrame& Slot = WorldShadowFrames[ResourceIndex];
-    if (Slot.PreparedFrame != FrameNumber)
+// 빈자리가 있으면 재사용하고, 없으면 끝에 하나 늘린다.
+uint32 AllocateMapIndex(TArray<uint8>& Used)
+{
+    for (int32 Index = 0; Index < Used.Num(); ++Index)
     {
-        PreparingShadowViews.Reset();
-        for (const FRegisteredShadowView& Registered : RegisteredShadowViews)
-            if (Registered.World == &World) PreparingShadowViews.Add(Registered.View);
-
-        BuildShadowRequests(World.GetScene(), Slot.Data);
-        // 2D와 Cube 번호는 각각 0부터, Caster가 남은 Light에만 차례로 배정한다.
-        uint32 Next2DSlice = 0;
-        uint32 NextCube = 0;
-        for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
+        if (!Used[Index])
         {
-            const ELightType Type = Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType();
-            bool bPrepared = false;
-            if (Type == ELightType::Spot)
-                bPrepared = PrepareSpotShadow(World, Index, Slot.Data, Next2DSlice);
-            else if (Type == ELightType::Directional)
-                bPrepared = PrepareDirectionalShadow(World, Index, Slot.Data, Next2DSlice);
-            else if (Type == ELightType::Point)
-                bPrepared = PreparePointShadow(World, Index, Slot.Data, NextCube);
-            if (bPrepared) ++Slot.Data.CullingStats.LightsRendered;
+            Used[Index] = 1;
+            return static_cast<uint32>(Index);
         }
-        Slot.PreparedFrame = FrameNumber;
     }
-    return &Slot.Data;
+    Used.Add(1);
+    return static_cast<uint32>(Used.Num() - 1);
 }
 
-void FSceneRenderer::ReleaseWorldShadows(uint32 ResourceIndex)
+void FreeMapIndex(TArray<uint8>& Used, uint32 Index)
 {
-    if (ResourceIndex >= MaxShadowResourceSlots) return;
-    WorldShadowFrames[ResourceIndex].Data.ResetFrame();
-    WorldShadowFrames[ResourceIndex].PreparedFrame = 0;
+    if (Index < static_cast<uint32>(Used.Num())) Used[Index] = 0;
 }
 
-bool FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame, uint32& NextMapIndex)
+// 사용 중인 가장 큰 번호 + 1. GPU 배열은 이 크기 이상이어야 한다.
+uint32 GetRequiredMapCount(const TArray<uint8>& Used)
 {
-    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
-    const auto* Light = static_cast<const FPointLightSceneProxy*>(Request.Light);
-    const FPointLightInfo& Point = Light->GetInfo();
+    for (int32 Index = Used.Num() - 1; Index >= 0; --Index)
+        if (Used[Index]) return static_cast<uint32>(Index + 1);
+    return 0;
+}
+
+// 엔진의 View 축은 +X 전방, +Y 오른쪽, +Z 위쪽이다.
+FMatrix MakeLightView(const FVector& Eye, const FVector& Forward, const FVector& Right, const FVector& Up)
+{
+    FMatrix Rotation = FMatrix::Identity;
+    Rotation.SetAxis(0, Forward);
+    Rotation.SetAxis(1, Right);
+    Rotation.SetAxis(2, Up);
+    return FMatrix::MakeTranslation(Eye * -1.0f) * Rotation.GetTransposed();
+}
+
+bool BuildPointSetup(const FPointLightSceneProxy& Light, uint32 Resolution, FLightShadowSetup& Out)
+{
+    const FPointLightInfo& Point = Light.GetInfo();
     // D3D Cube 순서 +X,-X,+Y,-Y,+Z,-Z. 면의 Up도 Cube 조회 규약에 맞춘다.
     const FVector Directions[] = {FVector(1,0,0), FVector(-1,0,0), FVector(0,1,0), FVector(0,-1,0), FVector(0,0,1), FVector(0,0,-1)};
     const FVector Ups[] = {FVector(0,1,0), FVector(0,1,0), FVector(0,0,-1), FVector(0,0,1), FVector(0,1,0), FVector(0,1,0)};
@@ -508,134 +512,79 @@ bool FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FSha
     Projection.FarClip = Point.AttenuationRadius;
     const FMatrix ProjectionMatrix = Projection.GetMatrix(1.0f);
 
-    FShadowCasterCullContext Context;
-    Context.LightType = ELightType::Point;
-    Context.LightPosition = Point.Position;
-    Context.ExtrudeDistance = Point.AttenuationRadius;
+    Out.PassCount = FTextureCubeArray::FaceCount;
+    for (uint32 Face = 0; Face < FTextureCubeArray::FaceCount; ++Face)
+    {
+        Out.FaceForward[Face] = Directions[Face];
+        Out.FaceUp[Face] = Ups[Face];
+        Out.FaceRight[Face] = FVector::Cross(Ups[Face], Directions[Face]);
+        Out.ViewProjections[Face] = MakeLightView(Point.Position, Out.FaceForward[Face], Out.FaceRight[Face], Out.FaceUp[Face]) * ProjectionMatrix;
+        Out.Frusta[Face] = ExtractFrustumPlanes(Out.ViewProjections[Face]);
+    }
+
+    Out.Context.LightType = ELightType::Point;
+    Out.Context.LightPosition = Point.Position;
+    Out.Context.ExtrudeDistance = Point.AttenuationRadius;
     // 거리 d에서 텍셀 크기는 2 * d * tan(45도) / Res다.
-    Context.TexelsPerUnit = 0.5f * static_cast<float>(Frame.Resolution);
-
-    TArray<FShadowDepthPassInfo> FacePasses;
-    bool bHasCaster = false;
-    for (uint32 Face = 0; Face < FTextureCubeArray::FaceCount; ++Face)
-    {
-        const FVector& Forward = Directions[Face];
-        const FVector& Up = Ups[Face];
-        const FVector Right = FVector::Cross(Up, Forward);
-        // 엔진의 View 축은 +X 전방, +Y 오른쪽, +Z 위쪽이다.
-        FMatrix Rotation = FMatrix::Identity;
-        Rotation.SetAxis(0, Forward);
-        Rotation.SetAxis(1, Right);
-        Rotation.SetAxis(2, Up);
-        const FMatrix View = FMatrix::MakeTranslation(Point.Position * -1.0f) * Rotation.GetTransposed();
-        FShadowDepthPassInfo Pass;
-        Pass.RequestIndex = RequestIndex;
-        Pass.ViewProjection = View * ProjectionMatrix;
-        Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
-        // View 밖 면은 Caster를 모으지 않는다. 빈 패스도 Clear는 하므로 이전 프레임 깊이가 남지 않는다.
-        if (ShadowCullingSettings.bCullLightsByView && !IsPointFaceVisible(Point.Position, Point.AttenuationRadius, Forward, Right, Up, PreparingShadowViews))
-            ++Frame.CullingStats.PointFacesCulled;
-        else
-            BuildShadowCasterQueue(World, Pass, Context, Frame.CullingStats);
-        bHasCaster = bHasCaster || Pass.CasterPackets.Num() > 0;
-        FacePasses.Add(std::move(Pass));
-    }
-    if (!bHasCaster)
-    {
-        ++Frame.CullingStats.LightsCulledByNoCaster;
-        return false;
-    }
-
-    Request.ShadowMapIndex = NextMapIndex++;
-    for (uint32 Face = 0; Face < FTextureCubeArray::FaceCount; ++Face)
-    {
-        FacePasses[Face].ArraySlice = Request.ShadowMapIndex * FTextureCubeArray::FaceCount + Face;
-        Frame.ShadowDepthPassInfos.Add(std::move(FacePasses[Face]));
-    }
+    Out.Context.TexelsPerUnit = 0.5f * static_cast<float>(Resolution);
 
     // 조회 정보는 Light당 하나다. Cube 조회에는 6면 행렬 대신 위치와 Cube 번호를 쓴다.
-    FShadowInfo Info;
+    FShadowInfo& Info = Out.Info;
     Info.LightPosition = Point.Position;
     Info.InvRadius = 1.0f / Point.AttenuationRadius;
-    Info.ShadowMapIndex = Request.ShadowMapIndex;
     Info.LightType = static_cast<uint32>(ELightType::Point);
-    Info.Bias = Light->GetShadowBias() * Info.InvRadius;
-    Info.SlopeBias = Light->GetShadowSlopeBias();
-    Info.MaxSlope = Light->GetShadowMaxSlope();
+    Info.Bias = Light.GetShadowBias() * Info.InvRadius;
+    Info.SlopeBias = Light.GetShadowSlopeBias();
+    Info.MaxSlope = Light.GetShadowMaxSlope();
     // 면 중심 기준 T = 2 * d * tan(45도) / Res. 면 가장자리 텍셀은 더 작으므로 중심값이 상한이다.
-    Info.HalfTexelScale = 1.0f / static_cast<float>(Frame.Resolution);
-    Info.NormalOffset = Light->GetShadowNormalOffset();
-    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
-    Frame.ShadowInfos.Add(Info);
+    Info.HalfTexelScale = 1.0f / static_cast<float>(Resolution);
+    Info.NormalOffset = Light.GetShadowNormalOffset();
     return true;
 }
 
-bool FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame, uint32& NextMapIndex)
+bool BuildSpotSetup(const FSpotLightSceneProxy& Light, uint32 Resolution, FLightShadowSetup& Out)
 {
-    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
-    const auto* Light = static_cast<const FSpotLightSceneProxy*>(Request.Light);
-    const FSpotLightInfo& Spot = Light->GetInfo();
+    const FSpotLightInfo& Spot = Light.GetInfo();
     const FVector Forward = Spot.Direction.GetSafeNormal();
     // Perspective에 유효한 전방 방향과 0 < 반각 < 90도가 필요하다.
     if (Forward.Dot(Forward) == 0.0f || Spot.CosOuterCone <= 0.0f || Spot.CosOuterCone >= 1.0f) return false;
     const FVector UpGuide = std::abs(Forward.Z) > 0.99f ? FVector(0, 1, 0) : FVector(0, 0, 1);
     const FVector Right = FVector::Cross(UpGuide, Forward).GetSafeNormal();
     const FVector Up = FVector::Cross(Forward, Right);
-    FMatrix Rotation = FMatrix::Identity;
-    Rotation.SetAxis(0, Forward);
-    Rotation.SetAxis(1, Right);
-    Rotation.SetAxis(2, Up);
-    const FMatrix View = FMatrix::MakeTranslation(Spot.Position * -1.0f) * Rotation.GetTransposed();
     FCameraProjection Projection;
     Projection.FovDegrees = FMath::RadiansToDegrees(2.0f * std::acos(Spot.CosOuterCone));
     // 월드 거리 0.01을 기본으로 하되 작은 Light도 Far보다 작은 Near를 유지한다.
     constexpr float DefaultShadowNear = 0.01f;
     Projection.NearClip = std::min(DefaultShadowNear, Spot.AttenuationRadius * 0.01f);
     Projection.FarClip = Spot.AttenuationRadius;
-
     // 중심축 기준 T = 2 * d * tan(반각) / Res.
     const float TanHalfFov = std::sqrt(1.0f - Spot.CosOuterCone * Spot.CosOuterCone) / Spot.CosOuterCone;
 
-    FShadowDepthPassInfo Pass;
-    Pass.RequestIndex = RequestIndex;
-    Pass.ViewProjection = View * Projection.GetMatrix(1.0f);
-    Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
-    FShadowCasterCullContext Context;
-    Context.LightType = ELightType::Spot;
-    Context.LightPosition = Spot.Position;
-    Context.ExtrudeDistance = Spot.AttenuationRadius;
-    Context.TexelsPerUnit = static_cast<float>(Frame.Resolution) / (2.0f * TanHalfFov);
-    BuildShadowCasterQueue(World, Pass, Context, Frame.CullingStats);
-    if (Pass.CasterPackets.Num() == 0)
-    {
-        ++Frame.CullingStats.LightsCulledByNoCaster;
-        return false;
-    }
-    Request.ShadowMapIndex = NextMapIndex++;
-    Pass.ArraySlice = Request.ShadowMapIndex;
+    Out.PassCount = 1;
+    Out.ViewProjections[0] = MakeLightView(Spot.Position, Forward, Right, Up) * Projection.GetMatrix(1.0f);
+    Out.Frusta[0] = ExtractFrustumPlanes(Out.ViewProjections[0]);
 
-    FShadowInfo Info;
-    Info.ViewProjection = Pass.ViewProjection;
+    Out.Context.LightType = ELightType::Spot;
+    Out.Context.LightPosition = Spot.Position;
+    Out.Context.ExtrudeDistance = Spot.AttenuationRadius;
+    Out.Context.TexelsPerUnit = static_cast<float>(Resolution) / (2.0f * TanHalfFov);
+
+    FShadowInfo& Info = Out.Info;
+    Info.ViewProjection = Out.ViewProjections[0];
     Info.LightPosition = Spot.Position;
     Info.InvRadius = 1.0f / Spot.AttenuationRadius;
-    Info.ShadowMapIndex = Request.ShadowMapIndex;
     Info.LightType = static_cast<uint32>(ELightType::Spot);
-    Info.Bias = Light->GetShadowBias() * Info.InvRadius;
-    Info.SlopeBias = Light->GetShadowSlopeBias();
-    Info.MaxSlope = Light->GetShadowMaxSlope();
-    Info.HalfTexelScale = TanHalfFov / static_cast<float>(Frame.Resolution);
-    Info.NormalOffset = Light->GetShadowNormalOffset();
-    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
-    Frame.ShadowInfos.Add(Info);
-    Frame.ShadowDepthPassInfos.Add(std::move(Pass));
+    Info.Bias = Light.GetShadowBias() * Info.InvRadius;
+    Info.SlopeBias = Light.GetShadowSlopeBias();
+    Info.MaxSlope = Light.GetShadowMaxSlope();
+    Info.HalfTexelScale = TanHalfFov / static_cast<float>(Resolution);
+    Info.NormalOffset = Light.GetShadowNormalOffset();
     return true;
 }
 
-bool FSceneRenderer::PrepareDirectionalShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame, uint32& NextMapIndex)
+bool BuildDirectionalSetup(UWorld& World, const FDirectionalLightSceneProxy& Light, uint32 Resolution, FLightShadowSetup& Out)
 {
-    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
-    const auto* Light = static_cast<const FDirectionalLightSceneProxy*>(Request.Light);
-    const FVector Forward = Light->GetInfo().Direction.GetSafeNormal();
+    const FVector Forward = Light.GetInfo().Direction.GetSafeNormal();
     if (Forward.Dot(Forward) == 0.0f) return false;
 
     // 기존 BVH가 갱신한 장면 경계를 재사용한다. 실제 Caster 선별은 Queue 수집에서 한다.
@@ -650,52 +599,236 @@ bool FSceneRenderer::PrepareDirectionalShadow(UWorld& World, uint32 RequestIndex
     const FVector UpGuide = std::abs(Forward.Z) > 0.99f ? FVector(0, 1, 0) : FVector(0, 0, 1);
     const FVector Right = FVector::Cross(UpGuide, Forward).GetSafeNormal();
     const FVector Up = FVector::Cross(Forward, Right);
-    FMatrix Rotation = FMatrix::Identity;
-    Rotation.SetAxis(0, Forward);
-    Rotation.SetAxis(1, Right);
-    Rotation.SetAxis(2, Up);
-    const FMatrix View = FMatrix::MakeTranslation(Eye * -1.0f) * Rotation.GetTransposed();
     FCameraProjection Projection;
     Projection.Mode = EProjectionMode::Orthographic;
     Projection.OrthoWidth = 2.0f * Radius;
     Projection.NearClip = Radius;
     Projection.FarClip = 3.0f * Radius;
 
-    FShadowDepthPassInfo Pass;
-    Pass.RequestIndex = RequestIndex;
-    Pass.ViewProjection = View * Projection.GetMatrix(1.0f);
-    Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
-    FShadowCasterCullContext Context;
-    Context.LightType = ELightType::Directional;
-    Context.LightDirection = Forward;
-    // 장면 구 안의 Caster가 드리우는 그림자는 깊이 범위(Far - Near = 2r)를 넘지 않는다.
-    Context.ExtrudeDistance = Projection.FarClip - Projection.NearClip;
-    Context.TexelsPerUnit = static_cast<float>(Frame.Resolution) / Projection.OrthoWidth;
-    BuildShadowCasterQueue(World, Pass, Context, Frame.CullingStats);
-    if (Pass.CasterPackets.Num() == 0)
-    {
-        ++Frame.CullingStats.LightsCulledByNoCaster;
-        return false;
-    }
-    Request.ShadowMapIndex = NextMapIndex++;
-    Pass.ArraySlice = Request.ShadowMapIndex;
+    Out.PassCount = 1;
+    Out.ViewProjections[0] = MakeLightView(Eye, Forward, Right, Up) * Projection.GetMatrix(1.0f);
+    Out.Frusta[0] = ExtractFrustumPlanes(Out.ViewProjections[0]);
 
-    FShadowInfo Info;
-    Info.ViewProjection = Pass.ViewProjection;
-    Info.ShadowMapIndex = Request.ShadowMapIndex;
+    Out.Context.LightType = ELightType::Directional;
+    Out.Context.LightDirection = Forward;
+    // 장면 구 안의 Caster가 드리우는 그림자는 깊이 범위(Far - Near = 2r)를 넘지 않는다.
+    Out.Context.ExtrudeDistance = Projection.FarClip - Projection.NearClip;
+    Out.Context.TexelsPerUnit = static_cast<float>(Resolution) / Projection.OrthoWidth;
+
+    FShadowInfo& Info = Out.Info;
+    Info.ViewProjection = Out.ViewProjections[0];
     Info.LightType = static_cast<uint32>(ELightType::Directional);
     // Orthographic 깊이는 선형이므로 월드 거리를 Far-Near로 나누면 비교 깊이가 된다.
     const float InvDepthRange = 1.0f / (Projection.FarClip - Projection.NearClip);
     Info.InvRadius = InvDepthRange;
-    Info.Bias = Light->GetShadowBias() * InvDepthRange;
-    Info.SlopeBias = Light->GetShadowSlopeBias();
-    Info.MaxSlope = Light->GetShadowMaxSlope();
+    Info.Bias = Light.GetShadowBias() * InvDepthRange;
+    Info.SlopeBias = Light.GetShadowSlopeBias();
+    Info.MaxSlope = Light.GetShadowMaxSlope();
     // Orthographic은 텍셀 크기가 맵 전체에서 일정하다: T = OrthoWidth / Res.
-    const float TexelSize = Projection.OrthoWidth / static_cast<float>(Frame.Resolution);
+    const float TexelSize = Projection.OrthoWidth / static_cast<float>(Resolution);
     Info.HalfTexelScale = 0.5f * TexelSize;
-    Info.NormalOffset = Light->GetShadowNormalOffset();
+    Info.NormalOffset = Light.GetShadowNormalOffset();
+    return true;
+}
+}
+
+const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint32 ResourceIndex)
+{
+    if (!bFrameActive || ResourceIndex >= MaxShadowResourceSlots) return nullptr;
+    FWorldShadowFrame& Slot = WorldShadowFrames[ResourceIndex];
+    if (Slot.PreparedFrame == FrameNumber) return &Slot.Data;
+
+    PreparingShadowViews.Reset();
+    for (const FRegisteredShadowView& Registered : RegisteredShadowViews)
+        if (Registered.World == &World) PreparingShadowViews.Add(Registered.View);
+
+    BuildShadowRequests(World.GetScene(), Slot.Data);
+    FShadowCullingStats& Stats = Slot.Data.CullingStats;
+    const bool bCaching = ShadowCullingSettings.bCacheShadowMaps;
+    Stats.bCaching = bCaching;
+
+    // 1. 캐시 무효화. 기준이 바뀌었으면 전부, 아니면 바뀐 Caster의 바운드가 걸친 면만 무효로 한다.
+    //    이번 프레임에 그리지 않는(View 등으로 컬링된) Light의 캐시에도 적용해야 다음에 쓸 때 낡은 내용이 남지 않는다.
+    TArray<FAABB> Invalidations;
+    bool bInvalidateAll = false;
+    World.GetScene().ConsumeShadowInvalidations(Invalidations, bInvalidateAll);
+    bInvalidateAll = bInvalidateAll || !bCaching || !Slot.bCacheActive
+        || Slot.CachedResolution != Slot.Data.Resolution
+        || Slot.CachedMinCasterTexels != ShadowCullingSettings.MinCasterTexels;
+    Slot.bCacheActive = bCaching;
+    Slot.CachedResolution = Slot.Data.Resolution;
+    Slot.CachedMinCasterTexels = ShadowCullingSettings.MinCasterTexels;
+    for (auto& Pair : Slot.CacheEntries)
+    {
+        FShadowCacheEntry& Entry = Pair.second;
+        Entry.bSeen = false;
+        for (uint32 Face = 0; Face < Entry.PassCount; ++Face)
+        {
+            if (!Entry.bFaceValid[Face]) continue;
+            bool bHit = bInvalidateAll;
+            for (int32 Index = 0; Index < Invalidations.Num() && !bHit; ++Index)
+                bHit = IsAABBInFrustum(Invalidations[Index], Entry.Frusta[Face]);
+            if (!bHit) continue;
+            Entry.bFaceValid[Face] = false;
+            if (!bInvalidateAll) ++Stats.CacheFacesInvalidatedByCaster;
+        }
+    }
+    for (uint32 LightId : Slot.Data.ConsideredLightIds)
+        if (FShadowCacheEntry* Entry = Slot.CacheEntries.Find(LightId)) Entry->bSeen = true;
+
+    // 2. Light별 준비.
+    for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
+    {
+        const FLightSceneProxy* Light = Slot.Data.ShadowRequestsPerLight[Index].Light;
+        FLightShadowSetup Setup;
+        bool bValidSetup = false;
+        switch (Light->GetLightType())
+        {
+        case ELightType::Directional:
+            bValidSetup = BuildDirectionalSetup(World, *static_cast<const FDirectionalLightSceneProxy*>(Light), Slot.Data.Resolution, Setup);
+            break;
+        case ELightType::Spot:
+            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), Slot.Data.Resolution, Setup);
+            break;
+        case ELightType::Point:
+            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), Slot.Data.Resolution, Setup);
+            break;
+        default:
+            break;
+        }
+        if (bValidSetup && PrepareLightShadow(World, Index, Slot, Setup)) ++Stats.LightsRendered;
+    }
+
+    // 3. 이번 프레임에 고려되지 않은 Light(삭제, CastShadow 꺼짐 등)는 캐시와 슬롯을 반납한다.
+    for (auto Iterator = Slot.CacheEntries.begin(); Iterator != Slot.CacheEntries.end();)
+    {
+        const auto Current = Iterator++;
+        if (Current->second.bSeen) continue;
+        if (Current->second.MapIndex != InvalidShadowMapIndex)
+            FreeMapIndex(Current->second.bCube ? Slot.UsedCubes : Slot.Used2DSlices, Current->second.MapIndex);
+        Slot.CacheEntries.Remove(Current->first);
+    }
+
+    Slot.Data.Required2DSlices = GetRequiredMapCount(Slot.Used2DSlices);
+    Slot.Data.RequiredCubes = GetRequiredMapCount(Slot.UsedCubes);
+    Slot.PreparedFrame = FrameNumber;
+    return &Slot.Data;
+}
+
+bool FSceneRenderer::PrepareLightShadow(UWorld& World, uint32 RequestIndex, FWorldShadowFrame& Slot, const FLightShadowSetup& Setup)
+{
+    FShadowFrameData& Frame = Slot.Data;
+    FShadowCullingStats& Stats = Frame.CullingStats;
+    FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
+    const bool bCaching = ShadowCullingSettings.bCacheShadowMaps;
+    const bool bCube = Setup.PassCount == FTextureCubeArray::FaceCount;
+    TArray<uint8>& UsedMaps = bCube ? Slot.UsedCubes : Slot.Used2DSlices;
+
+    FShadowCacheEntry& Entry = Slot.CacheEntries[Request.Light->GetComponent()->GetUUID()];
+    Entry.bSeen = true;
+    Entry.bCube = bCube;
+
+    // 캐시 키 비교. 행렬이 하나라도 다르면 Light가 바뀐 것이므로 모든 면을 다시 그린다.
+    bool bKeyChanged = Entry.PassCount != Setup.PassCount;
+    for (uint32 Face = 0; Face < Setup.PassCount && !bKeyChanged; ++Face)
+        bKeyChanged = std::memcmp(&Entry.ViewProjections[Face], &Setup.ViewProjections[Face], sizeof(FMatrix)) != 0;
+    if (bKeyChanged)
+    {
+        if (bCaching && Entry.PassCount != 0) ++Stats.CacheLightsInvalidated;
+        Entry.PassCount = Setup.PassCount;
+        for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+        {
+            Entry.ViewProjections[Face] = Setup.ViewProjections[Face];
+            Entry.Frusta[Face] = Setup.Frusta[Face];
+            Entry.bFaceValid[Face] = false;
+        }
+    }
+
+    FShadowDepthPassInfo Passes[MaxShadowPassesPerLight];
+    bool bRebuilt[MaxShadowPassesPerLight] = {};
+    const auto RebuildFace = [&](uint32 Face)
+    {
+        FShadowDepthPassInfo& Pass = Passes[Face];
+        Pass.RequestIndex = RequestIndex;
+        Pass.ViewProjection = Setup.ViewProjections[Face];
+        Pass.Frustum = Setup.Frusta[Face];
+        // 캐싱 중에는 면 내용이 카메라에 의존하면 안 되므로 면 View 컬링을 하지 않는다.
+        if (!bCaching && bCube && ShadowCullingSettings.bCullLightsByView &&
+            !IsPointFaceVisible(Setup.Context.LightPosition, Setup.Context.ExtrudeDistance, Setup.FaceForward[Face], Setup.FaceRight[Face], Setup.FaceUp[Face], PreparingShadowViews))
+            ++Stats.PointFacesCulled;
+        else
+            BuildShadowCasterQueue(World, Pass, Setup.Context, Stats);
+        Entry.bFaceHasCaster[Face] = Pass.CasterPackets.Num() > 0;
+        bRebuilt[Face] = true;
+    };
+    // 캐싱을 끄면 매 프레임 모든 면을 다시 그린다.
+    for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+        if (!bCaching || !Entry.bFaceValid[Face]) RebuildFace(Face);
+
+    bool bHasCaster = false;
+    for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+        bHasCaster = bHasCaster || Entry.bFaceHasCaster[Face];
+    if (!bHasCaster)
+    {
+        // 그릴 Caster가 없으면 슬롯도 필요 없다. 다시 모은 면은 "비어 있음"으로 유효 처리해 무효화될 때까지 다시 모으지 않는다.
+        if (Entry.MapIndex != InvalidShadowMapIndex)
+        {
+            FreeMapIndex(UsedMaps, Entry.MapIndex);
+            Entry.MapIndex = InvalidShadowMapIndex;
+        }
+        for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+            if (bRebuilt[Face]) Entry.bFaceValid[Face] = bCaching;
+        ++Stats.LightsCulledByNoCaster;
+        return false;
+    }
+    if (Entry.MapIndex == InvalidShadowMapIndex)
+    {
+        Entry.MapIndex = AllocateMapIndex(UsedMaps);
+        // 새 슬롯의 이전 내용은 다른 Light의 것일 수 있으므로 비어 있던 면까지 모두 다시 그린다.
+        for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+            if (!bRebuilt[Face]) RebuildFace(Face);
+    }
+
+    // 다시 모은 면만 그린다. 빈 면도 패스를 내서 Clear한다.
+    for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+    {
+        if (!bRebuilt[Face])
+        {
+            ++Stats.ShadowPassesCached;
+            continue;
+        }
+        Passes[Face].ArraySlice = bCube ? Entry.MapIndex * FTextureCubeArray::FaceCount + Face : Entry.MapIndex;
+        Frame.ShadowDepthPassInfos.Add(std::move(Passes[Face]));
+        Entry.bFaceValid[Face] = bCaching;
+        ++Stats.ShadowPassesDrawn;
+    }
+
+    Request.ShadowMapIndex = Entry.MapIndex;
+    FShadowInfo Info = Setup.Info;
+    Info.ShadowMapIndex = Entry.MapIndex;
     Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
     Frame.ShadowInfos.Add(Info);
-    Frame.ShadowDepthPassInfos.Add(std::move(Pass));
     return true;
+}
+
+void FSceneRenderer::ReleaseWorldShadows(uint32 ResourceIndex)
+{
+    if (ResourceIndex >= MaxShadowResourceSlots) return;
+    FWorldShadowFrame& Slot = WorldShadowFrames[ResourceIndex];
+    Slot.Data.ResetFrame();
+    Slot.PreparedFrame = 0;
+    // GPU 배열과 함께 버려지므로 캐시와 슬롯도 처음 상태로 돌린다.
+    Slot.CacheEntries.Reset();
+    Slot.Used2DSlices.Reset();
+    Slot.UsedCubes.Reset();
+    Slot.bCacheActive = false;
+    Slot.CachedResolution = 0;
+    Slot.CachedMinCasterTexels = -1.0f;
+}
+
+void FSceneRenderer::InvalidateShadowCache(uint32 ResourceIndex)
+{
+    if (ResourceIndex >= MaxShadowResourceSlots) return;
+    for (auto& Pair : WorldShadowFrames[ResourceIndex].CacheEntries)
+        for (bool& bValid : Pair.second.bFaceValid) bValid = false;
 }

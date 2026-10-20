@@ -21,6 +21,11 @@ struct FShadowCullingSettings
 
     // Caster: 쉐도우 맵 상 지름(텍셀)이 이 값보다 작으면 그리지 않는다. 0 이하면 끈다.
     float MinCasterTexels = 1.0f;
+
+    // 쉐도우 맵 캐싱: 지난 프레임 쉐도우 맵을 재사용하고, Light 변경이나 범위 안 Caster 변경이 있을 때만 다시 그린다.
+    // 켜면 쉐도우 맵 내용이 카메라에 의존하면 안 되므로 View 기반 Caster 컬링과 Point 면 컬링을 끈다.
+    // 끄면 매 프레임 모두 다시 그린다(캐시 누락 버그 비교용).
+    bool bCacheShadowMaps = true;
 };
 
 // 컬링 판정에 쓰는 View 값 스냅샷.
@@ -53,4 +58,13 @@ struct FShadowCullingStats
     uint32 CastersCulledByView = 0;
     uint32 CastersCulledBySize = 0;
     uint32 CastersDrawn = 0;
+
+    // 쉐도우 맵 캐싱. 패스는 Directional/Spot 1장, Point 면 1장 단위다.
+    bool bCaching = false;
+    uint32 ShadowPassesDrawn = 0;
+    uint32 ShadowPassesCached = 0;
+    // Light 자체가 바뀌어(행렬이 달라져) 전체를 다시 그린 Light 수.
+    uint32 CacheLightsInvalidated = 0;
+    // 범위 안 Caster가 바뀌어 무효가 된 면 수.
+    uint32 CacheFacesInvalidatedByCaster = 0;
 };

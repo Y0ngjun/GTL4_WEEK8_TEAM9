@@ -131,6 +131,7 @@ bool UEditorEngine::Init()
 	OutlineRenderer->Init(Renderer);
 
 	SettingsPanel = EditorUI->AddEditorPanel<FSettingsPanel>();
+	DebugPanel = EditorUI->AddEditorPanel<FDebugPanel>();
 
 	//ToolbarPanel->SetPlayCallback([this]() { RequestPlaySession(); });
 	//ToolbarPanel->SetStopCallback([this]() { RequestEndPlayMap(); });
@@ -237,9 +238,13 @@ bool UEditorEngine::Init()
         const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
         return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber() ? Resources : nullptr;
     });
-	SettingsPanel->SetShadowCullingStatsQuery([this]() -> const FShadowCullingStats*
+	// Debug 패널은 Settings가 소유한 그림자 설정을 직접 고치고, World별 결과를 읽는다.
+	DebugPanel->SetShadowCullingSettings(&SettingsPanel->GetMutableSettings().ShadowCulling);
+	DebugPanel->SetHasPlayWorldQuery([this]() { return PlayWorld != nullptr; });
+	DebugPanel->SetShadowStatsQuery([this](bool bPlayWorld) -> const FShadowCullingStats*
 	{
-		const FWorldContext* Context = GetWorldContextFromWorld(EditorWorld);
+		UWorld* StatsWorld = bPlayWorld ? PlayWorld : EditorWorld;
+		const FWorldContext* Context = StatsWorld ? GetWorldContextFromWorld(StatsWorld) : nullptr;
 		return Context ? SceneRenderer.GetShadowCullingStats(Context->ShadowResourceIndex) : nullptr;
 	});
 	SettingsPanel->SetHasLitViewQuery([this]()
@@ -929,8 +934,10 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
                 Context->ShadowResourceIndex = Renderer->AllocateShadowResources(Context->WorldType == EWorldType::Editor);
             ShadowResourceIndex = Context->ShadowResourceIndex;
             ShadowFrame = SceneRenderer.PrepareWorldShadows(ViewWorld, ShadowResourceIndex);
-            if (ShadowFrame)
-                Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame, ShadowFrame->Resolution);
+            // 그리다 실패하면 GPU 쉐도우 맵 내용을 믿을 수 없으므로 캐시를 버린다.
+            if (ShadowFrame && !Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame, ShadowFrame->Resolution)
+                && !ShadowFrame->ShadowInfos.IsEmpty())
+                SceneRenderer.InvalidateShadowCache(ShadowResourceIndex);
         }
     }
     const bool bReadyForShading = Renderer->BindShadowResources(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);

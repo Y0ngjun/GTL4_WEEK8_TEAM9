@@ -32,7 +32,7 @@ struct FEditorSettings
 	// ACES fitted는 중간 회색(0.18)을 어둡게 내리므로, +0.6EV에서 톤매핑 전과 비슷한 밝기가 된다
 	float ExposureEV = 0.6f;
 
-	// Shadow Culling: 매 프레임 FSceneRenderer에 넘긴다.
+	// Shadow Culling·Caching: 매 프레임 FSceneRenderer에 넘긴다. UI는 Debug 패널이 그리고 저장은 여기서 한다.
 	FShadowCullingSettings ShadowCulling;
 
 	// Grid
@@ -85,8 +85,6 @@ public:
     // 초기화된 뷰포트 클라이언트에 저장 설정을 적용한다.
     void SetViewportsPanel(FViewportsPanel* Value);
     void SetHasLitViewQuery(std::function<bool()> InQuery) { HasLitViewQuery = std::move(InQuery); }
-    // Editor World의 마지막 그림자 컬링 결과. 준비한 적 없으면 nullptr.
-    void SetShadowCullingStatsQuery(std::function<const FShadowCullingStats*()> InQuery) { ShadowCullingStatsQuery = std::move(InQuery); }
     // 종료 저장은 마지막 프레임의 복사본을 사용해 뷰포트 클라이언트 수명과 분리한다.
     void CaptureViewportSettings();
 
@@ -99,7 +97,6 @@ private:
     void ApplyViewportSettings();
     FViewportsPanel* ViewportsPanel = nullptr;
     std::function<bool()> HasLitViewQuery;
-    std::function<const FShadowCullingStats*()> ShadowCullingStatsQuery;
 	UWorld* World;
 	FEditorSettings Settings;
 };

@@ -73,40 +73,6 @@ void FSettingsPanel::OnRender()
 	//////////////////////////////////////////////////////////
 
 	ImGui::Dummy(ImVec2(0.0f, SectionGap));
-	ImGui::SeparatorText("Shadow Culling");
-
-	FShadowCullingSettings& Culling = Settings.ShadowCulling;
-	ImGui::TextDisabled("Judged against all shadowed views (shadow maps are shared).");
-	ImGui::Checkbox("Cull Lights By View", &Culling.bCullLightsByView);
-	ImGui::SetItemTooltip("Skip Point/Spot lights (and Point cube faces) outside every view frustum.");
-	ImGui::DragFloat("Shadow Distance", &Culling.ShadowDistance, 1.0f, 0.0f, 100000.0f, Culling.ShadowDistance > 0.0f ? "%.1f" : "Off");
-	ImGui::SetItemTooltip("Skip Point/Spot lights farther than this from every camera. 0 = off.");
-	ImGui::DragFloat("Min Light Screen Radius (px)", &Culling.MinLightScreenRadius, 0.1f, 0.0f, 1000.0f, Culling.MinLightScreenRadius > 0.0f ? "%.1f" : "Off");
-	ImGui::SetItemTooltip("Skip Point/Spot lights whose influence radius is smaller than this on every view. 0 = off.");
-	ImGui::Checkbox("Cull Casters By View", &Culling.bCullCastersByView);
-	ImGui::SetItemTooltip("Skip casters whose shadow volume (bounds extruded away from the light) misses every view.");
-	ImGui::DragFloat("Min Caster Size (texels)", &Culling.MinCasterTexels, 0.05f, 0.0f, 64.0f, Culling.MinCasterTexels > 0.0f ? "%.2f" : "Off");
-	ImGui::SetItemTooltip("Skip casters whose bounding diameter in the shadow map is smaller than this. 0 = off.");
-
-	if (const FShadowCullingStats* Stats = ShadowCullingStatsQuery ? ShadowCullingStatsQuery() : nullptr)
-	{
-		ImGui::TextDisabled("Editor World (last prepared frame)");
-		ImGui::Text("Lights   %u considered -> %u rendered", Stats->LightsConsidered, Stats->LightsRendered);
-		ImGui::Text("  culled: intensity %u, view %u, distance %u, size %u, no caster %u",
-			Stats->LightsCulledByIntensity, Stats->LightsCulledByView, Stats->LightsCulledByDistance,
-			Stats->LightsCulledByScreenSize, Stats->LightsCulledByNoCaster);
-		ImGui::Text("  point faces culled: %u", Stats->PointFacesCulled);
-		ImGui::Text("Casters  %u tests -> %u drawn", Stats->CastersConsidered, Stats->CastersDrawn);
-		ImGui::Text("  culled: view %u, size %u", Stats->CastersCulledByView, Stats->CastersCulledBySize);
-	}
-	else
-	{
-		ImGui::TextDisabled("No shadows prepared for the Editor World yet.");
-	}
-
-	//////////////////////////////////////////////////////////
-
-	ImGui::Dummy(ImVec2(0.0f, SectionGap));
 	ImGui::SeparatorText("Grid");
 
 	ImGui::BeginDisabled(!Settings.bDrawGrid);
@@ -187,6 +153,7 @@ bool FSettingsPanel::SaveSettings() const
 	File << "MinLightScreenRadius=" << Settings.ShadowCulling.MinLightScreenRadius << "\n";
 	File << "CullCastersByView=" << Settings.ShadowCulling.bCullCastersByView << "\n";
 	File << "MinCasterTexels=" << Settings.ShadowCulling.MinCasterTexels << "\n";
+	File << "CacheShadowMaps=" << Settings.ShadowCulling.bCacheShadowMaps << "\n";
 	File << "\n";
 
 	File << "[Grid]\n";
@@ -336,6 +303,7 @@ bool FSettingsPanel::LoadSettings()
 				else if (Key == "MinLightScreenRadius") Settings.ShadowCulling.MinLightScreenRadius = std::stof(ValueStr);
 				else if (Key == "CullCastersByView") Settings.ShadowCulling.bCullCastersByView = std::stoi(ValueStr);
 				else if (Key == "MinCasterTexels") Settings.ShadowCulling.MinCasterTexels = std::stof(ValueStr);
+				else if (Key == "CacheShadowMaps") Settings.ShadowCulling.bCacheShadowMaps = std::stoi(ValueStr);
 
 				else if (Key == "GridSpacing") Settings.GridSpacing = std::stoi(ValueStr);
 

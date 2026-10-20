@@ -68,8 +68,19 @@ struct FShadowFrameData
     // 마지막 준비의 컬링 결과. UI가 프레임 정리 후 읽으므로 ResetFrame에서 지우지 않고 준비 시작 시 지운다.
     FShadowCullingStats CullingStats;
 
+    // GPU 배열이 가져야 할 최소 크기. 캐시된 Light는 이번 프레임 패스가 없어도 자기 슬롯이 배열 안에 있어야 한다.
+    uint32 Required2DSlices = 0;
+    uint32 RequiredCubes = 0;
+
+    // 이번 프레임 Light 단위 컬링 전까지 남은 Light(visible, CastShadow, 반경 > 0)의 컴포넌트 UUID.
+    // 여기 없는 Light의 캐시와 슬롯은 반납한다. View 등으로 컬링된 Light는 캐시를 유지한다.
+    TArray<uint32> ConsideredLightIds;
+
     void ResetFrame()
     {
+        ConsideredLightIds.Reset();
+        Required2DSlices = 0;
+        RequiredCubes = 0;
         ShadowInfos.Reset();
         ShadowDepthPassInfos.Reset();
         ShadowRequestsPerLight.Reset();
