@@ -39,7 +39,7 @@ public:
 	void SetSelectionCallback(DetailsSelectionCallback InCallback) { Callback = InCallback; }
 	void SetDeleteComponentCallback(DetailsDeleteComponentCallback InCallback) { DeleteCallback = InCallback; }
 
-    void SetShadowPreviewQuery(std::function<const FShadowResources*(ULightComponent*)> InQuery) { ShadowPreviewQuery = std::move(InQuery); }
+    void SetShadowPreviewQuery(std::function<const FShadowResources*(ULightComponent*, FString&)> InQuery) { ShadowPreviewQuery = std::move(InQuery); }
 
 	void SetWorld(UWorld* InWorld) { World = InWorld; }
 
@@ -47,8 +47,9 @@ public:
 
 private:
     void DrawShadowPreview(ULightComponent* Light);
-    std::function<const FShadowResources*(ULightComponent*)> ShadowPreviewQuery;
+    std::function<const FShadowResources*(ULightComponent*, FString&)> ShadowPreviewQuery;
     int PreviewFace = 0;
+    int PreviewCascade = 0;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> PreviewTexture;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> PreviewSRV;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> PreviewShader;

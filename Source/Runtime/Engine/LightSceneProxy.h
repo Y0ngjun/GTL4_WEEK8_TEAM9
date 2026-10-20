@@ -77,17 +77,23 @@ public:
 	{
 		const UDirectionalLightComponent* Light = static_cast<const UDirectionalLightComponent*>(Component);
 		Info = Light->GetDirectionalLightInfo();
+        CascadeSettings = Light->GetCascadeSettings();
+        bUseCSM = Light->UsesCSM();
 		UpdateShadowSettings(Light);
 		LightSourceAngle = Light->GetLightSourceAngle();
 		bVisible = Light->IsLightVisible();
 	}
 
 	const FDirectionalLightInfo& GetInfo() const { return Info; }
+    const FShadowCascadeSettings& GetCascadeSettings() const { return CascadeSettings; }
+    bool UsesCSM() const { return bUseCSM; }
 	float GetLightSourceAngle() const { return LightSourceAngle; }
 
 private:
 	FDirectionalLightInfo Info;
 	float LightSourceAngle = 0.0f;
+    FShadowCascadeSettings CascadeSettings;
+    bool bUseCSM = false;
 };
 
 class FPointLightSceneProxy final : public FLightSceneProxy

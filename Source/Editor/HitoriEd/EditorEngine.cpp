@@ -31,6 +31,7 @@
 #include "Editor/HitoriEd/EditorResourcePaths.h"
 #include "UObject/UObjectIterator.h"
 #include "Component/SpotLightComponent.h"
+#include "Component/DirectionalLightComponent.h"
 #include "Core/ResourcePaths.h"
 
 #include "Core/EngineLog.h"
@@ -229,10 +230,50 @@ bool UEditorEngine::Init()
 
 	SettingsPanel->SetWorld(GetActiveWorld());
 	SettingsPanel->SetViewportsPanel(ViewportsPanel);
-    DetailsPanel->SetShadowPreviewQuery([this](ULightComponent* Light) -> const FShadowResources*
+    DetailsPanel->SetShadowPreviewQuery([this](ULightComponent* Light, FString& PreviewSource) -> const FShadowResources*
     {
         UWorld* PreviewWorld = Light->GetOwner() ? Light->GetOwner()->GetWorld() : nullptr;
         if (!PreviewWorld) return nullptr;
+        if (PreviewWorld->IsPlayInEditor())
+        {
+            PreviewSource = "Shadow preview is available for the editor world only.";
+            return nullptr;
+        }
+        if (Cast<UDirectionalLightComponent>(Light))
+        {
+            const int32 SelectedIndex = ViewportsPanel->GetActiveViewIndex();
+            const FViewport* Selected = ViewportsPanel->GetViewport(SelectedIndex);
+            if (!Selected)
+            {
+                PreviewSource = "Select a viewport to preview its directional shadow.";
+                return nullptr;
+            }
+            PreviewSource = "Viewport " + std::to_string(SelectedIndex + 1);
+            if (Selected->GetGameClient())
+            {
+                PreviewSource += ": select an editor viewport for shadow preview.";
+                return nullptr;
+            }
+            PreviewSource += " (Editor)";
+            if (!Selected->IsVisible())
+            {
+                PreviewSource += ": hidden.";
+                return nullptr;
+            }
+            if (!Selected->GetActiveClient() || Selected->GetActiveClient()->GetWorld() != PreviewWorld)
+            {
+                PreviewSource += ": this light belongs to a different world.";
+                return nullptr;
+            }
+            const FShadowResources& Resources = Selected->GetDirectionalShadow();
+            if (!Resources.bDepthReady || Resources.RenderedFrame != SceneRenderer.GetFrameNumber())
+            {
+                PreviewSource += ": no shadow result for the current frame.";
+                return nullptr;
+            }
+            return &Resources;
+        }
+        PreviewSource = "World shadow (shared by viewports).";
         const FWorldContext* Context = GetWorldContextFromWorld(PreviewWorld);
         if (!Context) return nullptr;
         const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
@@ -241,6 +282,13 @@ bool UEditorEngine::Init()
 	// Debug 패널은 Settings가 소유한 그림자 설정을 직접 고치고, World별 결과를 읽는다.
 	DebugPanel->SetShadowCullingSettings(&SettingsPanel->GetMutableSettings().ShadowCulling);
 	DebugPanel->SetHasPlayWorldQuery([this]() { return PlayWorld != nullptr; });
+	DebugPanel->SetDirectionalStatsQuery([this]() -> const FShadowCullingStats*
+	{
+		const FViewport* Selected = ViewportsPanel->GetViewport(ViewportsPanel->GetActiveViewIndex());
+		if (!Selected || !Selected->IsVisible() || Selected->GetGameClient()) return nullptr;
+		const FShadowResources& Resources = Selected->GetDirectionalShadow();
+		return Resources.RenderedFrame == SceneRenderer.GetFrameNumber() && Resources.bDepthReady ? &Resources.CullingStats : nullptr;
+	});
 	DebugPanel->SetShadowStatsQuery([this](bool bPlayWorld) -> const FShadowCullingStats*
 	{
 		UWorld* StatsWorld = bPlayWorld ? PlayWorld : EditorWorld;
@@ -926,6 +974,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
     const bool bSupportsShadows = ViewSupportsShadows(View);
     uint32 ShadowResourceIndex = InvalidShadowResourceIndex;
     const FShadowFrameData* ShadowFrame = nullptr;
+    FShadowFrameData DirectionalFrame;
     if (bSupportsShadows)
     {
         if (FWorldContext* Context = GetWorldContextFromWorld(&ViewWorld))
@@ -933,17 +982,17 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
             if (Context->ShadowResourceIndex == InvalidShadowResourceIndex)
                 Context->ShadowResourceIndex = Renderer->AllocateShadowResources(Context->WorldType == EWorldType::Editor);
             ShadowResourceIndex = Context->ShadowResourceIndex;
-            ShadowFrame = SceneRenderer.PrepareWorldShadows(ViewWorld, ShadowResourceIndex);
-            // 그리다 실패하면 GPU 쉐도우 맵 내용을 믿을 수 없으므로 캐시를 버린다.
-            if (ShadowFrame && !Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame, ShadowFrame->Resolution)
-                && !ShadowFrame->ShadowInfos.IsEmpty())
-                SceneRenderer.InvalidateShadowCache(ShadowResourceIndex);
+            ShadowFrame = Renderer->RenderWorldShadows(ShadowResourceIndex, ViewWorld, SceneRenderer);
         }
+        Renderer->RenderDirectionalShadow(Viewport, ViewWorld, SceneRenderer, View, DirectionalFrame);
     }
-    const bool bReadyForShading = Renderer->BindShadowResources(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);
+    else
+        Viewport.GetDirectionalShadow().ResetFrame();
+    const bool bReadyForShading = Renderer->BindWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);
+    const bool bDirectionalReady = Renderer->BindDirectionalShadow(Viewport, SceneRenderer.GetFrameNumber(), bSupportsShadows);
     // 셰이딩 준비가 성공한 경우에만 기존 요청 배열을 비소유 참조로 전달한다.
     const TArray<FShadowRequestPerLight>* ShadowRequests = bReadyForShading && ShadowFrame ? &ShadowFrame->ShadowRequestsPerLight : nullptr;
-    ViewWorld.GetScene().BuildLightingConstants(Lighting, ShadowRequests);
+    ViewWorld.GetScene().BuildLightingConstants(Lighting, ShadowRequests, bDirectionalReady ? &DirectionalFrame.ShadowRequestsPerLight : nullptr);
     ViewWorld.GetScene().BuildStructuredLight(Data.PointLights, Data.SpotLights, Data.CullingLights, View.ViewMatrix, ShadowRequests);
     Lighting.bReadyForShading = bReadyForShading ? 1u : 0u;
     Lighting.NumShadowInfos = bReadyForShading ? Renderer->GetShadowResources(ShadowResourceIndex)->NumShadowInfos : 0u;
@@ -951,6 +1000,8 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 
 	// 1. 불투명·반투명 Pass (Linear 씬 컬러)
 	RenderOpaquePass(Viewport, SceneRenderingInfo, View, RenderQueue, Lighting.Directional);
+    // Viewport 자원을 GPU 바인딩이 붙잡지 않게 조명 패스 소비 후 해제한다.
+    Renderer->BindDirectionalShadow(Viewport, SceneRenderer.GetFrameNumber(), false);
 
 	if (SettingsPanel->GetSettings().bDepthView)
 	{

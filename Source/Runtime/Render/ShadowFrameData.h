@@ -31,7 +31,7 @@ struct FShadowDepthPassInfo
     uint32 RequestIndex = ~0u;
 
     // Pass 1에서 선택할 DSV의 물리 slice 번호.
-    // Directional/Spot: ArraySlice = ShadowMapIndex. 
+    // Standard Directional/Spot: ArraySlice = ShadowMapIndex. Cascade: Cascade 번호.
     // Point: ArraySlice = ShadowMapIndex * 6 + 면 번호.
     uint32 ArraySlice = 0;
 
@@ -45,10 +45,24 @@ struct FShadowDepthPassInfo
     FRenderQueue CasterPackets;
 };
 
+struct FShadowCascadeSplit
+{
+    // RenderLocation 기준 전방 축의 선형 깊이. Cascade 선택 경계는 겹치지 않는다.
+    float NearDepth = 0.0f;
+    float FarDepth = 0.0f;
+    // 앞 Cascade의 혼합 시작점까지 확장한 투영용 near. 투영 far는 FarDepth와 같다.
+    float ProjectionNearDepth = 0.0f;
+    // subfrustum을 감싸는 원래 구. Snapping은 투영의 가로·세로 중심에만 적용한다.
+    FVector SphereCenter;
+    float SphereRadius = 0.0f;
+    // ViewProjection은 구 범위, Frustum은 caster 수집용 범위다.
+    FShadowDepthPassInfo DepthPass;
+};
 
-// 한 World의 이번 프레임 CPU 준비 자료. GPU 그림자 배열 자체를 소유하지 않는다.
-// GPU 배열은 Renderer가 소유하고 WorldContext가 자원 슬롯을 가리킨다.
-// 매 프레임 깊이를 다시 그리되 같은 World의 여러 View는 그 프레임 결과를 공유한다.
+
+// 이번 프레임 CPU 준비 자료. GPU 그림자 배열 자체를 소유하지 않는다.
+// Point/Spot은 World별로 공유하고 Directional은 View 렌더 호출 안에서 소비한다.
+// GPU 배열은 각각 Renderer의 World 슬롯과 Viewport가 소유한다.
 // GPU 배열 할당은 재사용하며, 사용할 면의 깊이는 Draw 전에 Clear한다.
 struct FShadowFrameData
 {
@@ -59,7 +73,7 @@ struct FShadowFrameData
     // Point Light라면 FShadowRequestPerLight 1개가 추가되면 FShadowDepthPassInfo는 6개가 추가된다.
     TArray<FShadowDepthPassInfo> ShadowDepthPassInfos;
 
-    // Light별 준비 함수가 완성된 조회 정보만 추가하고 Request.ShadowIndex를 연결한다.
+    // Light별 준비 함수가 조회 정보를 추가하고 Request.ShadowIndex를 연결한다. CSM은 Cascade별 연속 항목이다.
     TArray<FShadowInfo> ShadowInfos;
 
     // Depth 패스 해상도. Bias의 텍셀 크기(T)도 이 값으로 계산한다.
@@ -75,6 +89,7 @@ struct FShadowFrameData
     // 이번 프레임 Light 단위 컬링 전까지 남은 Light(visible, CastShadow, 반경 > 0)의 컴포넌트 UUID.
     // 여기 없는 Light의 캐시와 슬롯은 반납한다. View 등으로 컬링된 Light는 캐시를 유지한다.
     TArray<uint32> ConsideredLightIds;
+    TArray<FShadowCascadeSplit> CascadeSplits;
 
     void ResetFrame()
     {
@@ -84,5 +99,6 @@ struct FShadowFrameData
         ShadowInfos.Reset();
         ShadowDepthPassInfos.Reset();
         ShadowRequestsPerLight.Reset();
+        CascadeSplits.Reset();
     }
 };

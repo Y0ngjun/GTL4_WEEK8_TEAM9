@@ -8,14 +8,21 @@ class UDirectionalLightComponent : public ULightComponent
 {
 	DECLARE_CLASS(UDirectionalLightComponent, ULightComponent)
 	REFLECT_START(UDirectionalLightComponent)
-		PROPERTY(LightSourceAngle)
-	REFLECT_END()
+        PROPERTY(bUseCSM)
+        PROPERTY(CascadeCount)
+        PROPERTY(CascadeMaxDistance)
+        PROPERTY(CascadeSplitLambda)
+        PROPERTY(CascadeBlendRatio)
+    REFLECT_END()
 
 public:
 	UDirectionalLightComponent();
 	virtual ~UDirectionalLightComponent() override = default;
 
 	FDirectionalLightInfo GetDirectionalLightInfo() const;
+    FShadowCascadeSettings GetCascadeSettings() const;
+    bool UsesCSM() const { return bUseCSM; }
+    void PostEditChangeProperty(const FProperty& Property) override;
 	virtual FLightSceneProxy* CreateSceneProxy() override;
 
 	void DrawDebug(FLineBatcher* LineBatcher) const;
@@ -24,6 +31,11 @@ public:
 	void SetLightSourceAngle(float Value) { LightSourceAngle = Value; MarkSceneProxyDirty(); }
 
 private:
+    bool bUseCSM = false;
+    int32 CascadeCount = 4;
+    float CascadeMaxDistance = 100.0f;
+    float CascadeSplitLambda = 0.5f;
+    float CascadeBlendRatio = 0.1f;
 	// 광원의 각지름(도). 태양 ≈ 0.5357. 0이면 딱딱한 그림자.
 	float LightSourceAngle = 0.5357f;
 };

@@ -168,9 +168,22 @@ struct FShadowInfo
     float PCSSNearDepth;  // Spot/Point 차폐물 탐색용 정규화 Near 깊이
     float3 Padding;
 };
+cbuffer DirectionalShadowConstants : register(b5)
+{
+    uint bUseCSM;
+    uint CascadeCount;
+    uint2 DirectionalShadowPadding;
+    float3 CascadeViewOrigin;
+    float CascadeOriginPadding;
+    float3 CascadeViewForward;
+    float CascadeForwardPadding;
+    float4 CascadeDepthRanges[8]; // xy=선택 near/far, z=혼합 폭, w=padding
+};
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
 Texture2DArray<float> ShadowDepth2D : register(t13);
 TextureCubeArray<float> ShadowDepthCube : register(t14);
+StructuredBuffer<FShadowInfo> DirectionalShadowInfos : register(t15);
+Texture2DArray<float> DirectionalShadowDepth : register(t16);
 SamplerState ShadowSampler : register(s1);
 
 // PCF용 비교 샘플러
@@ -205,24 +218,68 @@ float3 ApplyNormalOffset(FShadowInfo Info, float3 WorldPosition, float3 N, float
     return WorldPosition + N * (Info.NormalOffset * HalfTexelWorld * SinTheta);
 }
 
-// Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
-float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+// 거리나 NDC.z가 아닌, 분할 생성과 같은 RenderLocation 기준 전방 깊이로 선택한다.
+uint SelectDirectionalShadowInfo(uint ShadowIndex, float3 WorldPosition)
 {
-    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
-    FShadowInfo Info = ShadowInfos[ShadowIndex];
+    if (ShadowIndex == 0xffffffffu || bUseCSM == 0u) return ShadowIndex;
+    float Depth = dot(WorldPosition - CascadeViewOrigin, CascadeViewForward);
+    for (uint Index = 0u; Index < CascadeCount; ++Index)
+    {
+        // 공유 경계에서는 먼저 검사하는 앞쪽 Cascade를 선택한다.
+        if (Depth >= CascadeDepthRanges[Index].x && Depth <= CascadeDepthRanges[Index].y)
+            return ShadowIndex + Index;
+    }
+    return 0xffffffffu;
+}
+
+// Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
+float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+    FShadowInfo Info = DirectionalShadowInfos[InfoIndex];
     float3 N = normalize(GeoNormal);
     float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
+
     // Orthographic은 텍셀 크기가 맵 전체에서 일정하다.
     float HalfTexelWorld = Info.HalfTexelScale;
     float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
     float4 Clip = mul(float4(ShadowPosition, 1.0f), Info.ViewProjection);
     float3 Ndc = Clip.xyz / Clip.w;
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
+    float StoredDepth = DirectionalShadowDepth.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     //return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
     return ShadowDepth2D.SampleCmpLevelZero(ShadowComparisonSampler, float3(UV, Info.ShadowMapIndex), Ndc.z - Bias);
+}
+
+float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+#if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
+    // CPU는 이 View의 Directional 바인딩이 준비된 경우에만 유효 번호를 전달한다.
+    if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
+    uint InfoIndex = SelectDirectionalShadowInfo(ShadowIndex, WorldPosition);
+    if (InfoIndex == 0xffffffffu) return 1.0f;
+    float Shadow = SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+    uint CascadeIndex = InfoIndex - ShadowIndex;
+    if (bUseCSM != 0u && CascadeIndex + 1u < CascadeCount)
+    {
+        float FarDepth = CascadeDepthRanges[CascadeIndex].y;
+        float BlendWidth = CascadeDepthRanges[CascadeIndex].z;
+        float Depth = dot(WorldPosition - CascadeViewOrigin, CascadeViewForward);
+        [branch]
+        if (BlendWidth > 0.0f && Depth >= FarDepth - BlendWidth)
+        {
+            float Weight = saturate((Depth - (FarDepth - BlendWidth)) / BlendWidth);
+            float NextShadow = SampleDirectionalShadow(InfoIndex + 1u, WorldPosition, GeoNormal, ToLightDirection);
+            // 깊이 자체가 아니라 각 행렬·bias로 비교한 그림자 판정값을 혼합한다.
+            Shadow = lerp(Shadow, NextShadow, Weight);
+        }
+    }
+    return Shadow;
+#else
+    return 1.0f;
+#endif
 }
 
 // Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.

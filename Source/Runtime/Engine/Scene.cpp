@@ -183,7 +183,7 @@ void FScene::MarkLightDirty(FLightSceneProxy* Proxy)
 	DirtyLights.Add(Proxy);
 }
 
-void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight) const
+void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight, const TArray<FShadowRequestPerLight>* DirectionalShadowRequests) const
 {
 	Out = FLightingConstants{};
 
@@ -198,7 +198,7 @@ void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShado
 			break;
 		case ELightType::Directional:
 			Out.Directional = static_cast<const FDirectionalLightSceneProxy*>(Proxy)->GetInfo();
-			Out.Directional.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
+			Out.Directional.ShadowIndex = FindShadowIndex(DirectionalShadowRequests, Proxy);
 			break;
 		case ELightType::Point:
 			if (Out.NumPointLights < MaxPointLights)
