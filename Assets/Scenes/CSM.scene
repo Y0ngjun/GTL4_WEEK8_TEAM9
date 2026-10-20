@@ -156,7 +156,7 @@
                                 "CascadeBlendRatio": 0.10000000149011612,
                                 "CascadeCount": 4,
                                 "CascadeMaxDistance": 100.0,
-                                "CascadeSplitLambda": 0.5,
+                                "CascadeDistributionExponent": 3.0,
                                 "Intensity": 1.0,
                                 "LightColor": {
                                     "A": 255,
