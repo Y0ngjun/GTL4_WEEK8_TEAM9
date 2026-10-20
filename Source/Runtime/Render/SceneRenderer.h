@@ -6,6 +6,7 @@
 #include "Render/ShadowFrameData.h"
 #include "Render/ShadowResources.h"
 #include "Render/LightInfo.h"
+#include "Render/ShadowAtlasAllocator.h"
 #include <initializer_list>
 
 class UWorld;
@@ -31,13 +32,13 @@ struct FShadowCasterCullContext
 };
 
 inline constexpr uint32 MaxShadowPassesPerLight = 6;
-inline constexpr uint32 InvalidShadowMapIndex = ~0u;
 
 // Light 하나의 쉐도우 맵을 그리는 데 필요한 값. 캐시 키(ViewProjection)도 여기서 나온다.
 struct FLightShadowSetup
 {
     // Directional/Spot 1, Point 6(큐브맵 면).
     uint32 PassCount = 0;
+    uint32 Resolution = DefaultShadowResolution;
     FMatrix ViewProjections[MaxShadowPassesPerLight]{};
     FFrustumPlanes Frusta[MaxShadowPassesPerLight]{};
     // Point 면 View 컬링용 면 축.
@@ -45,7 +46,7 @@ struct FLightShadowSetup
     FVector FaceRight[MaxShadowPassesPerLight]{};
     FVector FaceUp[MaxShadowPassesPerLight]{};
     FShadowCasterCullContext Context;
-    // ShadowMapIndex는 슬롯 배정 후 채운다.
+    // Atlas 위치는 할당 후 채운다.
     FShadowInfo Info;
 };
 
@@ -70,6 +71,7 @@ public:
     void PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes, const FSceneView* View = nullptr);
     const FShadowFrameData& GetWorldShadowFrame(uint32 ResourceIndex) const { return WorldShadowFrames[ResourceIndex].Data; }
     void ReleaseWorldShadows(uint32 ResourceIndex);
+    bool AllocateShadowMaps(FShadowFrameData& Frame, uint32 ResourceIndex);
     // GPU 쉐도우 맵 내용을 믿을 수 없을 때(렌더 실패 등) 호출한다. 다음 준비에서 모든 면을 다시 그린다.
     void InvalidateShadowCache(uint32 ResourceIndex);
     // 마지막으로 준비한 컬링 결과. 준비한 적 없으면 nullptr.
@@ -102,9 +104,8 @@ private:
         FFrustumPlanes Frusta[MaxShadowPassesPerLight]{};
         bool bFaceValid[MaxShadowPassesPerLight] = {};
         bool bFaceHasCaster[MaxShadowPassesPerLight] = {};
-        // Directional/Spot은 2D slice, Point는 Cube 번호. Caster가 없으면 슬롯을 갖지 않는다.
-        uint32 MapIndex = InvalidShadowMapIndex;
-        bool bCube = false;
+        TArray<FShadowAtlasRect> AtlasRects;
+        uint32 Resolution = 0;
         bool bSeen = false;
     };
     struct FWorldShadowFrame
@@ -112,9 +113,9 @@ private:
         FShadowFrameData Data;
         uint64 PreparedFrame = 0;
         TMap<uint32, FShadowCacheEntry> CacheEntries;
-        // 슬롯 사용 여부. 빈자리는 다음 Light가 재사용한다.
-        TArray<uint8> Used2DSlices;
-        TArray<uint8> UsedCubes;
+        FShadowAtlasAllocator AtlasAllocator;
+        // Directional은 캐싱하지 않으므로 이 프레임 동안만 영역을 유지한다.
+        TArray<FShadowAtlasRect> DirectionalAllocations;
         // 이 값들이 바뀌면 캐시 전체가 무효다.
         bool bCacheActive = false;
         uint32 CachedResolution = 0;
@@ -135,6 +136,7 @@ private:
     // Caster가 하나도 없으면 슬롯을 반납하고 false를 반환한다.
     bool PrepareLightShadow(UWorld& World, uint32 RequestIndex, FWorldShadowFrame& Slot, const FLightShadowSetup& Setup);
     void PrepareDirectionalShadowCSM(UWorld& World, FShadowFrameData& OutData, const FSceneView* View, uint32 Index, const FDirectionalLightSceneProxy* Light, uint32 ShadowResolution);
+    uint32 RegisterShadowMap(FShadowFrameData& Frame, uint32 LightRequestIndex, const FShadowInfo& Info, uint32 Resolution);
     void CaptureWorld(UWorld& World);
     void BuildRenderQueue(const FSceneView& View, FSceneRenderData& Data);
 

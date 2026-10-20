@@ -157,16 +157,15 @@ struct FShadowInfo
     row_major matrix ViewProjection;
     float3 LightPosition;
     float InvRadius;      // 월드 거리 -> 비교 깊이. Spot/Point: 1/반경, Directional: 1/(Far-Near)
-    uint ShadowMapIndex;
+    uint MapCount;
     uint LightType;
     float Bias;
     float SlopeBias;      // 무차원 k. k = 1이면 (T/2) * tan(theta), 이론상 최소값
     float MaxSlope;
     float HalfTexelScale; // 월드 T/2. Directional: 그대로, Spot/Point: 라이트 거리를 곱한다
     float NormalOffset;   // 무차원 k. k = 1이면 (T/2) * sin(theta), 이론상 최소값
-    float PenumbraScale;  // PCSS 반영 폭 계수 (단위는 C++ FShadowInfo 주석 참고)
-    float PCSSNearDepth;  // Spot/Point 차폐물 탐색용 정규화 Near 깊이
-    float3 Padding;
+    float Padding;
+    float4 AtlasUVScaleBias;
 };
 cbuffer DirectionalShadowConstants : register(b5)
 {
@@ -180,10 +179,8 @@ cbuffer DirectionalShadowConstants : register(b5)
     float4 CascadeDepthRanges[8]; // xy=선택 near/far, z=혼합 폭, w=padding
 };
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
-Texture2DArray<float> ShadowDepth2D : register(t13);
-TextureCubeArray<float> ShadowDepthCube : register(t14);
+Texture2D<float> ShadowAtlas : register(t13);
 StructuredBuffer<FShadowInfo> DirectionalShadowInfos : register(t15);
-Texture2DArray<float> DirectionalShadowDepth : register(t16);
 SamplerState ShadowSampler : register(s1);
 
 // PCF용 비교 샘플러
@@ -232,6 +229,29 @@ uint SelectDirectionalShadowInfo(uint ShadowIndex, float3 WorldPosition)
     return 0xffffffffu;
 }
 
+float SampleShadowAtlasDepth(FShadowInfo Info, float2 LocalUV)
+{
+    uint Width, Height;
+    ShadowAtlas.GetDimensions(Width, Height);
+    float2 HalfTexel = 0.5f / float2(Width, Height);
+    float2 Scale = Info.AtlasUVScaleBias.xy;
+    float2 Offset = Info.AtlasUVScaleBias.zw;
+    // 다른 타일을 읽지 않도록 유효 Texel 중심으로 제한한다.
+    float2 UV = clamp(LocalUV * Scale + Offset,
+        Offset + HalfTexel, Offset + Scale - HalfTexel);
+    return ShadowAtlas.SampleLevel(ShadowSampler, UV, 0);
+}
+
+uint SelectPointShadowFace(float3 Direction)
+{
+    float3 AbsDirection = abs(Direction);
+    if (AbsDirection.x >= AbsDirection.y && AbsDirection.x >= AbsDirection.z)
+        return Direction.x >= 0.0f ? 0u : 1u;
+    if (AbsDirection.y >= AbsDirection.z)
+        return Direction.y >= 0.0f ? 2u : 3u;
+    return Direction.z >= 0.0f ? 4u : 5u;
+}
+
 // Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
 float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
 {
@@ -247,7 +267,7 @@ float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNo
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
 
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = DirectionalShadowDepth.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
+    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     //return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
     return ShadowDepth2D.SampleCmpLevelZero(ShadowComparisonSampler, float3(UV, Info.ShadowMapIndex), Ndc.z - Bias);
@@ -302,7 +322,7 @@ float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPositi
     // 범위는 Bias 적용 전에 검사한다. Near 밖/반경 밖의 점은 그림자를 조회하지 않는다.
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
+    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
@@ -321,8 +341,16 @@ float ComputePointShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosit
     float3 FromLight = ShadowPosition - Info.LightPosition;
     float ReceiverDepth = length(FromLight) * Info.InvRadius;
     if (ReceiverDepth <= 0.0f || ReceiverDepth >= 1.0f) return 1.0f;
-    // GPU가 방향으로 면과 UV를 선택한다. w는 물리 Slice가 아닌 Cube 번호다.
-    float StoredDepth = ShadowDepthCube.SampleLevel(ShadowSampler, float4(FromLight, Info.ShadowMapIndex), 0);
+    // Normal Offset이 적용된 방향으로 면과 UV를 함께 선택한다.
+    uint Face = SelectPointShadowFace(FromLight);
+    if (Face >= Info.MapCount || Face >= NumShadowInfos - ShadowIndex) return 1.0f;
+    FShadowInfo FaceInfo = ShadowInfos[ShadowIndex + Face];
+    float4 Clip = mul(float4(ShadowPosition, 1.0f), FaceInfo.ViewProjection);
+    if (Clip.w <= 0.0f) return 1.0f;
+    float3 Ndc = Clip.xyz / Clip.w;
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
+    float StoredDepth = SampleShadowAtlasDepth(FaceInfo, UV);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }

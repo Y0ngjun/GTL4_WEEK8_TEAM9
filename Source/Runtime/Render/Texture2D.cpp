@@ -89,7 +89,8 @@ void FTexture2D::CreateViews(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& I
 	HRESULT hr;
 
 	// TYPELESS 깊이 텍스처는 뷰마다 해석할 포맷을 지정해야 한다 (nullptr이면 생성 실패)
-	const bool bTypelessDepth = (InDesc.Format == DXGI_FORMAT_R24G8_TYPELESS);
+	const bool bDepth32 = InDesc.Format == DXGI_FORMAT_R32_TYPELESS;
+	const bool bTypelessDepth = InDesc.Format == DXGI_FORMAT_R24G8_TYPELESS || bDepth32;
 	// sRGB 텍스처도 리소스가 TYPELESS라 뷰 포맷을 지정해야 한다
 	FSRGBFormatFamily SRGBFamily;
 	const bool bSRGB = GetSRGBFormatFamily(InDesc.Format, SRGBFamily);
@@ -115,7 +116,8 @@ void FTexture2D::CreateViews(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& I
 		else
 		{
 			D3D11_SHADER_RESOURCE_VIEW_DESC SrvDesc{};
-			SrvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;   // 깊이 24bit만 float로 읽는다
+			SrvDesc.Format = bDepth32 ? DXGI_FORMAT_R32_FLOAT
+				: DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
 			SrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 			SrvDesc.Texture2D.MipLevels = 1;
 
@@ -140,7 +142,9 @@ void FTexture2D::CreateViews(ID3D11Device* Device, const D3D11_TEXTURE2D_DESC& I
 	if (InDesc.BindFlags & D3D11_BIND_DEPTH_STENCIL)
 	{
 		D3D11_DEPTH_STENCIL_VIEW_DESC DsvDesc{};
-		DsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		DsvDesc.Format = bDepth32 ? DXGI_FORMAT_D32_FLOAT
+			: DXGI_FORMAT_D24_UNORM_S8_UINT;
+
 		DsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 
 		hr = Device->CreateDepthStencilView(Texture.Get(), bTypelessDepth ? &DsvDesc : nullptr, DSV.GetAddressOf());

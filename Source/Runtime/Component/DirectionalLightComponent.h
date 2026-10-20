@@ -11,7 +11,7 @@ class UDirectionalLightComponent : public ULightComponent
         PROPERTY(bUseCSM)
         PROPERTY(CascadeCount)
         PROPERTY(CascadeMaxDistance)
-        PROPERTY(CascadeSplitLambda)
+        PROPERTY(CascadeDistributionExponent)
         PROPERTY(CascadeBlendRatio)
     REFLECT_END()
 
@@ -34,7 +34,7 @@ private:
     bool bUseCSM = false;
     int32 CascadeCount = 4;
     float CascadeMaxDistance = 100.0f;
-    float CascadeSplitLambda = 0.5f;
+    float CascadeDistributionExponent = 3.0f;
     float CascadeBlendRatio = 0.1f;
 	// 광원의 각지름(도). 태양 ≈ 0.5357. 0이면 딱딱한 그림자.
 	float LightSourceAngle = 0.5357f;

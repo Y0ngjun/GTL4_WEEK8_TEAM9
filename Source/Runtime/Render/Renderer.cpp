@@ -34,10 +34,8 @@ namespace
     namespace ShadowSRVSlots
     {
         constexpr uint32 Infos = 12;
-        constexpr uint32 Texture2DArray = 13;
-        constexpr uint32 TextureCubeArray = 14;
+        constexpr uint32 Atlas = 13;
         constexpr uint32 DirectionalInfos = 15;
-        constexpr uint32 DirectionalDepth = 16;
     }
     constexpr uint32 ShadowSamplerSlot = 1;
     constexpr uint32 DirectionalShadowCBSlot = 5;
@@ -139,6 +137,14 @@ bool FRenderer::Init()
         HTR_LOG(Error, "[Renderer] required shadow near clamp shader is missing or invalid");
         return false;
     }
+    ShadowTileClearShader = FRenderResourceManager::FindShaderProgram("Resources/Shader/ShadowAtlasClear.hlsl");
+    if (!ShadowTileClearShader || !ShadowTileClearShader->VertexShader || !ShadowTileClearShader->PixelShader ||
+        !ShadowTileClearShader->VertexShader->IsValid() || !ShadowTileClearShader->PixelShader->IsValid()) return false;
+    D3D11_DEPTH_STENCIL_DESC ClearDepthDesc{};
+    ClearDepthDesc.DepthEnable = TRUE;
+    ClearDepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+    ClearDepthDesc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+    if (FAILED(RenderCommand::GetDevice()->CreateDepthStencilState(&ClearDepthDesc, ShadowTileClearDepthState.GetAddressOf()))) return false;
     if (!TileLightCulling.Init())
     {
         HTR_LOG(Error, "[Renderer] required tile light culling initialization failed");
@@ -698,9 +704,9 @@ void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix&
     RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
 
-bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, FShaderProgram* Shader, ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height)
+bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, FShaderProgram* Shader, ID3D11DepthStencilView* DSV, const FShadowAtlasRect& Rect)
 {
-    if (!DSV || Width == 0 || Height == 0) return false;
+    if (!DSV || !Rect.IsValid() || !ShadowTileClearShader || !ShadowTileClearDepthState) return false;
     if (!ShadowDepthPassCB || !ShadowDepthPassCB->GetBuffer() || !PerObjectCB || !PerObjectCB->GetBuffer()) return false;
     const FLightSceneProxy* Light = Request.Light;
     if (!Light) return false;
@@ -741,14 +747,23 @@ bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FSh
     RenderCommand::Unmap(ShadowDepthPassCB.get());
 
     // 그림자 입력 슬롯을 비워 SRV/DSV 동시 바인딩을 피한다.
-    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Texture2DArray, ShadowSRVSlots::TextureCubeArray})
+    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Atlas, ShadowSRVSlots::DirectionalInfos})
         RenderCommand::BindShaderResource(Slot, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
     FRenderingInfo RenderingInfo{};
-    RenderingInfo.ViewportSetting.Width = Width;
-    RenderingInfo.ViewportSetting.Height = Height;
+    RenderingInfo.ViewportSetting.StartX = Rect.X;
+    RenderingInfo.ViewportSetting.StartY = Rect.Y;
+    RenderingInfo.ViewportSetting.Width = Rect.Size;
+    RenderingInfo.ViewportSetting.Height = Rect.Size;
     RenderingInfo.DepthStencil.DSV = DSV;
-    RenderingInfo.DepthStencil.ClearFlags = D3D11_CLEAR_DEPTH;
+    RenderingInfo.DepthStencil.LoadOp = ERenderTargetLoadOp::Load;
     RenderCommand::BeginRenderPass(RenderingInfo);
+    // 이 타일만 깊이 1로 초기화하여 다른 Light의 캐시를 보존한다.
+    RenderCommand::BindShaderProgram(ShadowTileClearShader);
+    RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    RenderCommand::SetRasterizerState(ERasterizerState::SolidNone);
+    RenderCommand::SetBlendState(EBlendState::NoColorWrite);
+    RenderCommand::GetContext()->OMSetDepthStencilState(ShadowTileClearDepthState.Get(), 0);
+    RenderCommand::Draw(3);
     RenderCommand::BindShaderProgram(Shader);
     RenderCommand::SetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     // Bias는 Pass 2에서만 적용한다. 기존 SolidBack의 rasterizer bias는 0이다.
@@ -796,7 +811,7 @@ void FRenderer::ReleaseShadowResources(uint32 Index)
 {
     if (Index >= MaxShadowResourceSlots) return;
     // Context 정리 시 아직 바인딩된 뷰가 자원의 수명을 붙잡지 않게 한다.
-    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Texture2DArray, ShadowSRVSlots::TextureCubeArray})
+    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Atlas, ShadowSRVSlots::DirectionalInfos})
         RenderCommand::BindShaderResource(Slot, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
     WorldShadowResources[Index].reset();
 }
@@ -819,6 +834,11 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
     Resources.ResetFrame();
     Resources.RenderedFrame = FrameNumber;
 
+    // GPU 자원이 교체되면 기존 깊이를 참조하던 CPU 캐시도 무효다.
+    if (Resources.DepthAtlas && (Resources.DepthAtlas->GetWidth() != DefaultShadowAtlasSize ||
+        Resources.DepthAtlas->GetHeight() != DefaultShadowAtlasSize ||
+        !Resources.DepthAtlas->GetSRV() || !Resources.DepthAtlas->GetDSV()))
+        SceneRenderer.InvalidateShadowCache(Index);
     const FShadowFrameData* PreparedFrame = SceneRenderer.PrepareWorldShadows(World, Index);
     if (!PreparedFrame) return nullptr;
 
@@ -833,38 +853,28 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
         return nullptr;
     };
 
-    const uint32 Resolution = Frame.Resolution;
-    const uint32 SliceCount = Frame.Required2DSlices;
-    const uint32 CubeCount = Frame.RequiredCubes;
-
     for (const FShadowDepthPassInfo& Pass : Frame.ShadowDepthPassInfos)
     {
-        if (Pass.RequestIndex >= static_cast<uint32>(Frame.ShadowRequestsPerLight.Num())) return Fail();
-
+        if (Pass.RequestIndex >= Frame.ShadowRequestsPerLight.Num() ||
+            Pass.MapRequestIndex >= Frame.ShadowMapRequests.Num()) return Fail();
         const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[Pass.RequestIndex];
         if (!Request.Light) return Fail();
-
-        if (Request.Light->GetLightType() == ELightType::Point)
-        {
-            if (Request.ShadowMapIndex >= CubeCount || Pass.ArraySlice / FTextureCubeArray::FaceCount != Request.ShadowMapIndex) return Fail();
-        }
-        else
-        {
-            if (Request.Light->GetLightType() != ELightType::Spot) return Fail();
-            if (Pass.ArraySlice != Request.ShadowMapIndex || Pass.ArraySlice >= SliceCount) return Fail();
-        }
+        const FShadowMapRequest& Map = Frame.ShadowMapRequests[Pass.MapRequestIndex];
+        const FShadowAtlasRect& Rect = Map.AtlasRect;
+        if (Map.LightRequestIndex != Pass.RequestIndex || Map.ShadowInfoIndex >= Frame.ShadowInfos.Num() ||
+            !Rect.IsValid() || Rect.Size > Frame.ShadowAtlasSize ||
+            Rect.X > Frame.ShadowAtlasSize - Rect.Size || Rect.Y > Frame.ShadowAtlasSize - Rect.Size) return Fail();
     }
 
-    if (!Resources.EnsureCapacity(Resolution, SliceCount, CubeCount)) return Fail();
+    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Atlas, ShadowSRVSlots::DirectionalInfos})
+        RenderCommand::BindShaderResource(Slot, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+    if (!Resources.EnsureAtlasCapacity(Frame.ShadowAtlasSize)) return Fail();
 
     for (const FShadowDepthPassInfo& Pass : Frame.ShadowDepthPassInfos)
     {
         const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[Pass.RequestIndex];
-        ID3D11DepthStencilView* DSV = Request.Light->GetLightType() == ELightType::Point
-            ? Resources.DepthCube->GetFaceDSV(Request.ShadowMapIndex, Pass.ArraySlice % FTextureCubeArray::FaceCount)
-            : Resources.Depth2D->GetSliceDSV(Pass.ArraySlice);
-
-        if (!DrawShadowDepth(Request, Pass, ShadowDistanceShader, DSV, Resolution, Resolution)) return Fail();
+        const FShadowMapRequest& Map = Frame.ShadowMapRequests[Pass.MapRequestIndex];
+        if (!DrawShadowDepth(Request, Pass, ShadowDistanceShader, Resources.DepthAtlas->GetDSV(), Map.AtlasRect)) return Fail();
     }
 
     if (!Resources.UploadShadowInfos(Frame.ShadowInfos)) return Fail();
@@ -872,17 +882,27 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
     Resources.bDepthReady = true;
     Resources.bReadyForShading = true;
 
-    for (const FShadowRequestPerLight& Request : Frame.ShadowRequestsPerLight)
-        if (Request.ShadowIndex != InvalidShadowIndex)
-            Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), Request.ShadowMapIndex, Request.Light->GetLightType() == ELightType::Point});
+    for (uint32 LightIndex = 0; LightIndex < Frame.ShadowRequestsPerLight.Num(); ++LightIndex)
+    {
+        const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[LightIndex];
+        if (Request.ShadowIndex == InvalidShadowIndex) continue;
+        FShadowPreviewEntry Entry;
+        Entry.LightId = Request.Light->GetComponent()->GetUUID();
+        Entry.bPoint = Request.Light->GetLightType() == ELightType::Point;
+        for (const FShadowMapRequest& Map : Frame.ShadowMapRequests)
+            if (Map.LightRequestIndex == LightIndex) Entry.MapRects.Add(Map.AtlasRect);
+        Resources.PreviewEntries.Add(std::move(Entry));
+    }
 
     return &Frame;
 }
 
-bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 Resolution)
+bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex, uint32 Resolution)
 {
     FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     Resources.ResetFrame();
+    Frame.ResetFrame();
+    if (ResourceIndex >= MaxShadowResourceSlots || !WorldShadowResources[ResourceIndex]) return false;
     const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
     Frame.Resolution = Resolution;
     SceneRenderer.PrepareShadows(World, Frame, {ELightType::Directional}, &View);
@@ -896,21 +916,30 @@ bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSce
 
     Resources.RenderedFrame = FrameNumber;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
-    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
-    if (!Resources.EnsureCapacity(Resolution, PassCount, 0))
-		return false;
+    if (!SceneRenderer.AllocateShadowMaps(Frame, ResourceIndex))
+    {
+        Resources.CullingStats = Frame.CullingStats;
+        return false;
+    }
+    FShadowResources& WorldResources = *WorldShadowResources[ResourceIndex];
+    RenderCommand::BindShaderResource(ShadowSRVSlots::Atlas, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+    if (!WorldResources.EnsureAtlasCapacity(Frame.ShadowAtlasSize)) return false;
+    Resources.DepthAtlas = WorldResources.DepthAtlas;
 
     FShaderProgram* Shader = bUseCSM ? ShadowNearClampShader : DepthShader;
     for (uint32 Index = 0; Index < PassCount; ++Index)
     {
         const FShadowDepthPassInfo& Pass = bUseCSM ? Frame.CascadeSplits[Index].DepthPass : Frame.ShadowDepthPassInfos[Index];
-        if (!DrawShadowDepth(Request, Pass, Shader, Resources.Depth2D->GetSliceDSV(Pass.ArraySlice), Resolution, Resolution))
+        if (!DrawShadowDepth(Request, Pass, Shader, Resources.DepthAtlas->GetDSV(), Frame.ShadowMapRequests[Pass.MapRequestIndex].AtlasRect))
 			return false;
     }
 
     Resources.bDepthReady = true;
-    for (uint32 Index = 0; Index < PassCount; ++Index)
-        Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), Index, false});
+    FShadowPreviewEntry Entry;
+    Entry.LightId = Request.Light->GetComponent()->GetUUID();
+    for (const FShadowMapRequest& Map : Frame.ShadowMapRequests)
+        Entry.MapRects.Add(Map.AtlasRect);
+    Resources.PreviewEntries.Add(std::move(Entry));
     if (!Resources.SelectionCB)
 		Resources.SelectionCB = RenderCommand::CreateConstantBuffer(sizeof(FDirectionalShadowConstants));
     if (!Resources.SelectionCB || !Resources.SelectionCB->GetBuffer())
@@ -929,7 +958,7 @@ bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSce
     }
     RenderCommand::UpdateBufferData(Resources.SelectionCB.get(), &Constants);
     Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
-    return true;
+    return Resources.bReadyForShading;
 }
 
 bool FRenderer::BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupported)
@@ -937,8 +966,7 @@ bool FRenderer::BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupport
     const FShadowResources* Resources = GetShadowResources(Index);
     const bool bReady = bSupported && Resources && Resources->RenderedFrame == FrameNumber && Resources->bReadyForShading;
     RenderCommand::BindShaderResource(ShadowSRVSlots::Infos, bReady ? Resources->ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
-    RenderCommand::BindShaderResource(ShadowSRVSlots::Texture2DArray, bReady && Resources->Depth2D ? Resources->Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
-    RenderCommand::BindShaderResource(ShadowSRVSlots::TextureCubeArray, bReady && Resources->DepthCube ? Resources->DepthCube->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::Atlas, bReady && Resources->DepthAtlas ? Resources->DepthAtlas->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowComparisonSamplerSlot, ESamplerState::ShadowComparison, EShaderBindFlagBits::Pixel);
     return bReady;
@@ -949,7 +977,8 @@ bool FRenderer::BindDirectionalShadow(const FViewport& Viewport, uint64 FrameNum
     const FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     const bool bReady = bSupported && Resources.RenderedFrame == FrameNumber && Resources.bReadyForShading;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, bReady ? Resources.ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
-    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, bReady ? Resources.Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    if (bReady)
+        RenderCommand::BindShaderResource(ShadowSRVSlots::Atlas, Resources.DepthAtlas->GetSRV(), EShaderBindFlagBits::Pixel);
     RenderCommand::BindConstantBuffer(DirectionalShadowCBSlot, bReady ? Resources.SelectionCB.get() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
     return bReady;

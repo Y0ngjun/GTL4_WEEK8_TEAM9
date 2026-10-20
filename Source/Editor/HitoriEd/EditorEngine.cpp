@@ -984,7 +984,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
             ShadowResourceIndex = Context->ShadowResourceIndex;
             ShadowFrame = Renderer->RenderWorldShadows(ShadowResourceIndex, ViewWorld, SceneRenderer);
         }
-        Renderer->RenderDirectionalShadow(Viewport, ViewWorld, SceneRenderer, View, DirectionalFrame);
+        Renderer->RenderDirectionalShadow(Viewport, ViewWorld, SceneRenderer, View, DirectionalFrame, ShadowResourceIndex);
     }
     else
         Viewport.GetDirectionalShadow().ResetFrame();
