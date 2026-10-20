@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ShadowAtlasAllocator.h"
 #include "Render/RenderPacket.h"
 #include "Math/Frustum.h"
 #include "ShadowInfo.h"
@@ -8,18 +9,28 @@ class FLightSceneProxy;
 
 struct FShadowRequestPerLight
 {
-    // 이번 프레임에 그림자를 생성할 Light 하나
     const FLightSceneProxy* Light = nullptr;
-
-    // Light의 shadow map이 그려질 배열의 index
-    // Light 종류로 배열을 선택한다: Directional/Spot은 Texture2DArray, Point는 CubeArray.
-    // 이 Index는 2D 배열에서는 slice 번호, CubeArray에서는 cube 번호다(물리 slice 번호가 아니다).
-    // 배열별로 0부터 배정한다. Scene의 Light 번호나 GPU ShadowInfo 번호와는 무관하다.    
-    // todo : 현재는 caching을 적용하지 않아서, 매 프레임 shadow map을 다시 그린다.
-    uint32 ShadowMapIndex = 0;
-
-    // Light별 준비가 완료된 경우에만 ShadowInfos의 번호를 설정한다. 출력 slice와 다르다.
+    // 그룹의 첫 GPU 조회 정보. 면과 Cascade는 연속해서 등록한다.
     uint32 ShadowIndex = InvalidShadowIndex;
+
+    // 해당 Light에 등록된 Map 개수.
+    uint32 ShadowMapCount = 0;
+};
+
+// Map 한 장에 필요한 해상도와 배정된 Atlas 영역을 기록한다.
+struct FShadowMapRequest
+{
+    // 해당 Map을 요청한 Light 요청의 번호.
+    uint32 LightRequestIndex = ~0u;
+
+    // 배치 결과를 반영할 GPU 조회 정보의 번호.
+    uint32 ShadowInfoIndex = InvalidShadowIndex;
+
+    // Shadow Map 한 장의 해상도.
+    uint32 Resolution = 0;
+
+    // 할당 단계에서 채우는 Atlas 영역.
+    FShadowAtlasRect AtlasRect;
 };
 
 // 실제로 그릴 한 면의 CPU 자료다. 이 구조체 전체를 GPU 버퍼로 넘기지 않는다.
@@ -28,10 +39,8 @@ struct FShadowDepthPassInfo
     // 같은 FShadowFrameData의 ShadowRequestsPerLight 번호.
     uint32 RequestIndex = ~0u;
 
-    // Pass 1에서 선택할 DSV의 물리 slice 번호.
-    // Directional/Spot: ArraySlice = ShadowMapIndex. 
-    // Point: ArraySlice = ShadowMapIndex * 6 + 면 번호.
-    uint32 ArraySlice = 0;
+    // 자신이 사용할 Map 요청의 번호
+    uint32 MapRequestIndex = ~0u;
 
     // Pass 1 상수 버퍼로 전달할 World -> Light Clip 변환 행렬. 
     FMatrix ViewProjection{};
@@ -44,26 +53,32 @@ struct FShadowDepthPassInfo
 };
 
 
-// 한 World의 이번 프레임 CPU 준비 자료. GPU 그림자 배열 자체를 소유하지 않는다.
-// GPU 배열은 Renderer가 소유하고 WorldContext가 자원 슬롯을 가리킨다.
-// 매 프레임 깊이를 다시 그리되 같은 World의 여러 View는 그 프레임 결과를 공유한다.
-// GPU 배열 할당은 재사용하며, 사용할 면의 깊이는 Draw 전에 Clear한다.
+// World별 프레임 준비 자료. GPU Atlas는 FShadowResources가 소유한다.
 struct FShadowFrameData
 {
     // 이번 프레임에서 그림자 계산을 할 Light 목록
     TArray<FShadowRequestPerLight> ShadowRequestsPerLight;
+
+    // 그림자 맵 단위의 할당 요청 목록. Spot은 1개, CSM은 Cascade별로 요청한다.
+    // 요청 해상도 등을 기록하며, 실제 GPU 저장 위치는 할당 단계에서 결정한다.
+    TArray<FShadowMapRequest> ShadowMapRequests;
     
     // 각 Light 별 그림자 계산을 할때 필요한 정보들
     // Point Light라면 FShadowRequestPerLight 1개가 추가되면 FShadowDepthPassInfo는 6개가 추가된다.
     TArray<FShadowDepthPassInfo> ShadowDepthPassInfos;
 
-    // Light별 준비 함수가 완성된 조회 정보만 추가하고 Request.ShadowIndex를 연결한다.
+    // Map별 GPU 조회 정보. 같은 그룹은 면 또는 Cascade 순서로 연속 저장한다.
     TArray<FShadowInfo> ShadowInfos;
+    // 이번 프레임의 Shadow Atlas 전체 크기.
+    uint32 ShadowAtlasSize = 0;
 
     void ResetFrame()
     {
         ShadowInfos.Reset();
         ShadowDepthPassInfos.Reset();
         ShadowRequestsPerLight.Reset();
+
+        ShadowMapRequests.Reset();
+        ShadowAtlasSize = 0;
     }
 };

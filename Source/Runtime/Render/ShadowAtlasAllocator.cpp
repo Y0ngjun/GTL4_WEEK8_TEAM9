@@ -16,8 +16,6 @@ bool FShadowAtlasAllocator::Initialize(uint32 InAtlasSize, uint32 InMinBlockSize
 		return false;
 	}
 
-	Nodes.Reset();
-
 	AtlasSize = InAtlasSize;
 	MinBlockSize = InMinBlockSize;
 
@@ -29,6 +27,7 @@ bool FShadowAtlasAllocator::Initialize(uint32 InAtlasSize, uint32 InMinBlockSize
 void FShadowAtlasAllocator::Reset()
 {
 	Nodes.Reset();
+	if (AtlasSize == 0) return;
 	FNode RootNode;
 	RootNode.Rect = { 0, 0, AtlasSize };
 	RootNode.State = ENodeState::Free;
@@ -40,7 +39,7 @@ bool FShadowAtlasAllocator::Allocate(uint32 RequestedSize, FShadowAtlasRect& Out
 {
 	OutRect = {};
 
-	if (Nodes.IsEmpty() || !IsPowerOfTwo(RequestedSize) ||  RequestedSize < MinBlockSize || RequestedSize > AtlasSize )
+	if (Nodes.IsEmpty() || !IsPowerOfTwo(RequestedSize) || RequestedSize < MinBlockSize || RequestedSize > AtlasSize)
 	{
 		return false;
 	}

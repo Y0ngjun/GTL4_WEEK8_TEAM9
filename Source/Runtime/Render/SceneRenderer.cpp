@@ -192,12 +192,95 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
         PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
 }
 
+bool FSceneRenderer::AllocateShadowMaps(FWorldShadowFrame& Slot)
+{
+    FShadowFrameData& Frame = Slot.Data;
+
+    // 추후 에디터에서 조정할 수 있도록 해야함.
+    constexpr uint32 AtlasSize = 4096;
+    constexpr uint32 MinTileSize = 256;
+
+    Frame.ShadowAtlasSize = AtlasSize;
+
+    // CPU 배치는 매 프레임 다시 만든다.
+    if (!Slot.AtlasAllocator.Initialize(AtlasSize, MinTileSize))
+        return false;
+
+    TArray<uint32> RequestIndices;
+
+    for (uint32 Index = 0;
+        Index < Frame.ShadowMapRequests.Num();
+        ++Index)
+    {
+        FShadowMapRequest& Request = Frame.ShadowMapRequests[Index];
+
+        // 요청 해상도는 유지하고 이전 배치만 초기화한다.
+        Request.AtlasRect = {};
+
+        if (Request.Resolution == 0)
+        {
+            Request.Resolution = DefaultShadowResolution;
+        }
+
+        RequestIndices.Add(Index);
+    }
+
+    // 원본 Map 순서를 유지하고 배치 순서만 정렬한다.
+    std::stable_sort(RequestIndices.begin(), RequestIndices.end(),
+        [&Frame](uint32 A, uint32 B)
+        {
+            return Frame.ShadowMapRequests[A].Resolution > Frame.ShadowMapRequests[B].Resolution;
+        });
+
+    const float InvAtlasSize = 1.0f / static_cast<float>(AtlasSize);
+    for (uint32 MapRequestIndex : RequestIndices)
+    {
+        FShadowMapRequest& Request =
+            Frame.ShadowMapRequests[MapRequestIndex];
+
+        if (Request.ShadowInfoIndex >= Frame.ShadowInfos.Num() ||
+            !Slot.AtlasAllocator.Allocate(Request.Resolution, Request.AtlasRect))
+        {
+            return false;
+        }
+
+        const FShadowAtlasRect& Rect = Request.AtlasRect;
+        Frame.ShadowInfos[Request.ShadowInfoIndex].AtlasUVScaleBias = FVector4(
+            Rect.Size * InvAtlasSize, Rect.Size * InvAtlasSize,
+            Rect.X * InvAtlasSize, Rect.Y * InvAtlasSize);
+    }
+
+    return true;
+}
+
+uint32 FSceneRenderer::RegisterShadowMap(FShadowFrameData& Frame, uint32 LightRequestIndex, const FShadowInfo& Info, uint32 Resolution)
+{
+    FShadowRequestPerLight& LightRequest = Frame.ShadowRequestsPerLight[LightRequestIndex];
+
+    const uint32 ShadowInfoIndex = Frame.ShadowInfos.Add(Info);
+
+    // Light는 첫 Map의 GPU 조회 정보 번호를 가리킨다.
+    if (LightRequest.ShadowIndex == InvalidShadowIndex)
+    {
+        LightRequest.ShadowIndex = ShadowInfoIndex;
+    }
+
+    assert(ShadowInfoIndex == LightRequest.ShadowIndex + LightRequest.ShadowMapCount);
+    ++LightRequest.ShadowMapCount;
+    Frame.ShadowInfos[LightRequest.ShadowIndex].MapCount = LightRequest.ShadowMapCount;
+
+    FShadowMapRequest MapRequest;
+    MapRequest.LightRequestIndex = LightRequestIndex;
+    MapRequest.ShadowInfoIndex = ShadowInfoIndex;
+    MapRequest.Resolution = Resolution;
+
+    // TODO(CSM): Cascade별 Info와 Resolution을 이 함수로 등록한다.
+    return Frame.ShadowMapRequests.Add(MapRequest);
+}
+
 void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData)
 {
-    // 이전 CPU 요청/Queue만 비운다. GPU 배열을 해제하거나 재생성하는 처리가 아니다.
     OutData.ResetFrame();
-    uint32 Next2DSlice = 0;
-    uint32 NextCube = 0;
     const FLightSceneProxy* Directional = nullptr;
     for (const FLightSceneProxy* Light : Scene.Lights)
         if (Light->IsVisible() && Light->GetLightType() == ELightType::Directional)
@@ -205,10 +288,9 @@ void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& 
 
     // 기존 Directional 선택과 동일하게 마지막 visible 광원만 사용한다.
     if (Directional && Directional->CastsShadow())
-        OutData.ShadowRequestsPerLight.Add({Directional, Next2DSlice++});
+        OutData.ShadowRequestsPerLight.Add({Directional});
 
     // BuildStructuredLight와 같은 visible 조건·Point/Spot 순서다.
-    // 요청에 포함된 Light만 출력 위치를 배정한다. 2D와 Cube 번호는 각각 0부터 시작한다.
     for (ELightType Type : {ELightType::Point, ELightType::Spot})
     {
         for (const FLightSceneProxy* Light : Scene.Lights)
@@ -219,13 +301,13 @@ void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& 
             {
                 const FPointLightInfo& Info = static_cast<const FPointLightSceneProxy*>(Light)->GetInfo();
                 if (Info.AttenuationRadius <= 0.0f) continue;
-                OutData.ShadowRequestsPerLight.Add({Light, NextCube++});
+                OutData.ShadowRequestsPerLight.Add({Light});
             }
             else
             {
                 const FSpotLightInfo& Info = static_cast<const FSpotLightSceneProxy*>(Light)->GetInfo();
                 if (Info.AttenuationRadius <= 0.0f) continue;
-                OutData.ShadowRequestsPerLight.Add({Light, Next2DSlice++});
+                OutData.ShadowRequestsPerLight.Add({Light});
             }
         }
     }
@@ -269,16 +351,33 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     if (Slot.PreparedFrame != FrameNumber)
     {
         BuildShadowRequests(World.GetScene(), Slot.Data);
+
         for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
         {
             if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Spot)
                 PrepareSpotShadow(World, Index, Slot.Data);
-            else if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Directional)
-                PrepareDirectionalShadow(World, Index, Slot.Data);
             else if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Point)
                 PreparePointShadow(World, Index, Slot.Data);
+            else if (Slot.Data.ShadowRequestsPerLight[Index].Light->GetLightType() == ELightType::Directional)
+            {
+                // 일단은 Directinal Light 1개 
+                PrepareDirectionalShadow(World, Index, Slot.Data);
+
+                // TODO(CSM): View별 Cascade를 등록하고 모든 View 수집 후 Atlas를 배치한다.
+            }
+
         }
+
+        // 성공/실패와 관계없이 같은 프레임에 준비를 반복하지 않는다.
         Slot.PreparedFrame = FrameNumber;
+
+        // 생성된 Map 요청을 Atlas에 배치한다.
+        if (!AllocateShadowMaps(Slot))
+        {
+            // 부분적으로 배치된 자료를 렌더링에 넘기지 않는다.
+            Slot.Data.ResetFrame();
+            return nullptr;
+        }
     }
     return &Slot.Data;
 }
@@ -295,6 +394,8 @@ void FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FSha
     FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
     const auto* Light = static_cast<const FPointLightSceneProxy*>(Request.Light);
     const FPointLightInfo& Point = Light->GetInfo();
+    constexpr uint32 ShadowResolution = 256;
+    if (Point.AttenuationRadius <= 0.0f) return;
     // D3D Cube 순서 +X,-X,+Y,-Y,+Z,-Z. 면의 Up도 Cube 조회 규약에 맞춘다.
     const FVector Directions[] = {FVector(1,0,0), FVector(-1,0,0), FVector(0,1,0), FVector(0,-1,0), FVector(0,0,1), FVector(0,0,-1)};
     const FVector Ups[] = {FVector(0,1,0), FVector(0,1,0), FVector(0,0,-1), FVector(0,0,1), FVector(0,1,0), FVector(0,1,0)};
@@ -304,7 +405,7 @@ void FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FSha
     Projection.NearClip = std::min(DefaultShadowNear, Point.AttenuationRadius * 0.01f);
     Projection.FarClip = Point.AttenuationRadius;
     const FMatrix ProjectionMatrix = Projection.GetMatrix(1.0f);
-    for (uint32 Face = 0; Face < FTextureCubeArray::FaceCount; ++Face)
+    for (uint32 Face = 0; Face < 6; ++Face)
     {
         const FVector& Forward = Directions[Face];
         const FVector& Up = Ups[Face];
@@ -317,24 +418,24 @@ void FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FSha
         const FMatrix View = FMatrix::MakeTranslation(Point.Position * -1.0f) * Rotation.GetTransposed();
         FShadowDepthPassInfo Pass;
         Pass.RequestIndex = RequestIndex;
-        Pass.ArraySlice = Request.ShadowMapIndex * FTextureCubeArray::FaceCount + Face;
         Pass.ViewProjection = View * ProjectionMatrix;
         Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
         BuildShadowCasterQueue(World, Pass);
+
+
+        FShadowInfo Info;
+        Info.ViewProjection = Pass.ViewProjection;
+        Info.LightPosition = Point.Position;
+        Info.InvRadius = 1.0f / Point.AttenuationRadius;
+        Info.LightType = static_cast<uint32>(ELightType::Point);
+        Info.Bias = Light->GetShadowBias() * Info.InvRadius;
+        Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
+        Info.MaxSlope = Light->GetShadowMaxSlope();
+
+        Pass.MapRequestIndex = RegisterShadowMap(Frame, RequestIndex, Info, ShadowResolution);
+
         Frame.ShadowDepthPassInfos.Add(std::move(Pass));
     }
-
-    // 조회 정보는 Light당 하나다. Cube 조회에는 6면 행렬 대신 위치와 Cube 번호를 쓴다.
-    FShadowInfo Info;
-    Info.LightPosition = Point.Position;
-    Info.InvRadius = 1.0f / Point.AttenuationRadius;
-    Info.ShadowMapIndex = Request.ShadowMapIndex;
-    Info.LightType = static_cast<uint32>(ELightType::Point);
-    Info.Bias = Light->GetShadowBias() * Info.InvRadius;
-    Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
-    Info.MaxSlope = Light->GetShadowMaxSlope();
-    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
-    Frame.ShadowInfos.Add(Info);
 }
 
 void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame)
@@ -342,6 +443,7 @@ void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShad
     FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[RequestIndex];
     const auto* Light = static_cast<const FSpotLightSceneProxy*>(Request.Light);
     const FSpotLightInfo& Spot = Light->GetInfo();
+    constexpr uint32 ShadowResolution = 512;
     const FVector Forward = Spot.Direction.GetSafeNormal();
     // Perspective에 유효한 전방 방향과 0 < 반각 < 90도가 필요하다.
     if (Forward.Dot(Forward) == 0.0f || Spot.CosOuterCone <= 0.0f || Spot.CosOuterCone >= 1.0f) return;
@@ -362,7 +464,6 @@ void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShad
 
     FShadowDepthPassInfo Pass;
     Pass.RequestIndex = RequestIndex;
-    Pass.ArraySlice = Request.ShadowMapIndex;
     Pass.ViewProjection = View * Projection.GetMatrix(1.0f);
     Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
     BuildShadowCasterQueue(World, Pass);
@@ -371,13 +472,13 @@ void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShad
     Info.ViewProjection = Pass.ViewProjection;
     Info.LightPosition = Spot.Position;
     Info.InvRadius = 1.0f / Spot.AttenuationRadius;
-    Info.ShadowMapIndex = Request.ShadowMapIndex;
     Info.LightType = static_cast<uint32>(ELightType::Spot);
     Info.Bias = Light->GetShadowBias() * Info.InvRadius;
     Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
     Info.MaxSlope = Light->GetShadowMaxSlope();
-    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
-    Frame.ShadowInfos.Add(Info);
+
+    // Map 요청을 만들고 이 Pass와 연결한다.
+    Pass.MapRequestIndex = RegisterShadowMap(Frame, RequestIndex, Info, ShadowResolution);
     Frame.ShadowDepthPassInfos.Add(std::move(Pass));
 }
 
@@ -413,21 +514,19 @@ void FSceneRenderer::PrepareDirectionalShadow(UWorld& World, uint32 RequestIndex
 
     FShadowDepthPassInfo Pass;
     Pass.RequestIndex = RequestIndex;
-    Pass.ArraySlice = Request.ShadowMapIndex;
     Pass.ViewProjection = View * Projection.GetMatrix(1.0f);
     Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
     BuildShadowCasterQueue(World, Pass);
 
     FShadowInfo Info;
     Info.ViewProjection = Pass.ViewProjection;
-    Info.ShadowMapIndex = Request.ShadowMapIndex;
     Info.LightType = static_cast<uint32>(ELightType::Directional);
     // Orthographic 깊이는 선형이므로 월드 Bias를 Far-Near로 나눈다.
     const float InvDepthRange = 1.0f / (Projection.FarClip - Projection.NearClip);
     Info.Bias = Light->GetShadowBias() * InvDepthRange;
     Info.SlopeBias = Light->GetShadowSlopeBias() * InvDepthRange;
     Info.MaxSlope = Light->GetShadowMaxSlope();
-    Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
-    Frame.ShadowInfos.Add(Info);
+    // TODO(CSM): Cascade별 행렬로 등록하되 같은 Atlas 출력 경로를 사용한다.
+    Pass.MapRequestIndex = RegisterShadowMap(Frame, RequestIndex, Info, DefaultShadowResolution);
     Frame.ShadowDepthPassInfos.Add(std::move(Pass));
 }

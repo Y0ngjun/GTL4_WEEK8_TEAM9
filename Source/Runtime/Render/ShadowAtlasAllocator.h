@@ -1,6 +1,6 @@
 #pragma once
 #include "Core/Types.h"
-#include <Containers/Array.h>
+#include "Containers/Array.h"
 
 struct FShadowAtlasRect
 {
@@ -11,8 +11,7 @@ struct FShadowAtlasRect
 	bool IsValid() const { return Size != 0; }
 };
 
-// Atlas 크기 안에서 요청한 크기의 영역을 배정한다.
-// 요청한 크기에 맞는 빈 사각형을 
+// 한 Atlas의 정사각형 영역을 Quadtree로 배정한다.
 class FShadowAtlasAllocator
 {
 public:
@@ -23,7 +22,7 @@ public:
 	// 현재 크기를 유지하면서 전체 공간을 빈 상태로 되돌린다.
 	void Reset();
 
-	// RequtedSize는 MinBlockSize 이상이어야 한다. OutRect은 할당된 영역을 반환한다.
+	// 요청 크기는 MinBlockSize 이상인 2의 거듭제곱이다.
 	bool Allocate(uint32 RequestedSize, FShadowAtlasRect& OutRect);
 
 private:

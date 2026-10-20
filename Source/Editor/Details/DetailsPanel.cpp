@@ -1258,15 +1258,20 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
     if (Resources)
         for (const FShadowPreviewEntry& Candidate : Resources->PreviewEntries)
             if (Candidate.LightId == Light->GetUUID()) { Entry = &Candidate; break; }
-    if (!Entry)
+    if (!Entry || !Resources->DepthAtlas || Entry->MapRects.IsEmpty())
     {
         ImGui::TextDisabled("No shadow map rendered for this light.");
         return;
     }
-    const bool PreviewArray = Entry->bCube;
-    const uint32 PreviewIndex = Entry->ShadowMapIndex;
-    if (PreviewArray) ImGui::Combo("Face", &PreviewFace, "+X\0-X\0+Y\0-Y\0+Z\0-Z\0");
-    const FTexture* Source = PreviewArray ? static_cast<const FTexture*>(Resources->DepthCube.get()) : Resources->Depth2D.get();
+    const int32 MapCount = static_cast<int32>(Entry->MapRects.Num());
+    PreviewFace = std::clamp(PreviewFace, 0, MapCount - 1);
+    if (Entry->bPoint)
+        ImGui::Combo("Face", &PreviewFace, "+X\0-X\0+Y\0-Y\0+Z\0-Z\0");
+    else if (MapCount > 1)
+        ImGui::SliderInt("Cascade", &PreviewFace, 0, MapCount - 1);
+    PreviewFace = std::clamp(PreviewFace, 0, MapCount - 1);
+    const FShadowAtlasRect& Rect = Entry->MapRects[static_cast<uint32>(PreviewFace)];
+    const FTexture* Source = Resources->DepthAtlas.get();
     ID3D11Device* Device = RenderCommand::GetDevice();
     ID3D11DeviceContext* Context = RenderCommand::GetContext();
     if (!PreviewShader)
@@ -1304,11 +1309,14 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
             return;
         }
     }
-    const uint32 Slice = PreviewArray ? PreviewIndex * FTextureCubeArray::FaceCount + PreviewFace : PreviewIndex;
-    // UI는 Texture2D를 받으므로 배열의 선택한 한 장만 복사한다. 원본은 소유하지 않는다.
+    // 깊이 자원 전체를 복사하고 표시 UV로 선택한 Light의 Map만 보여준다.
     ID3D11ShaderResourceView* NullSRV = nullptr;
     Context->PSSetShaderResources(0, 1, &NullSRV);
-    Context->CopySubresourceRegion(PreviewTexture.Get(), 0, 0, 0, 0, Source->GetRawPtr(), Slice, nullptr);
+    Context->CopyResource(PreviewTexture.Get(), Source->GetRawPtr());
+    const float InvWidth = 1.0f / static_cast<float>(Source->GetWidth());
+    const float InvHeight = 1.0f / static_cast<float>(Source->GetHeight());
+    const ImVec2 UV0((Rect.X + 0.5f) * InvWidth, (Rect.Y + 0.5f) * InvHeight);
+    const ImVec2 UV1((Rect.X + Rect.Size - 0.5f) * InvWidth, (Rect.Y + Rect.Size - 0.5f) * InvHeight);
     ImGui::TextDisabled("Depth: black = 0, white = 1 (clear)");
     const float Size = std::max(1.0f, std::min(320.0f, ImGui::GetContentRegionAvail().x));
     ImGui::GetWindowDrawList()->AddCallback([](const ImDrawList*, const ImDrawCmd* Command)
@@ -1316,6 +1324,6 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
         auto* Panel = static_cast<FDetailsPanel*>(Command->UserCallbackData);
         RenderCommand::GetContext()->PSSetShader(Panel->PreviewShader.Get(), nullptr, 0);
     }, this);
-    ImGui::Image((ImTextureID)PreviewSRV.Get(), ImVec2(Size, Size));
+    ImGui::Image((ImTextureID)PreviewSRV.Get(), ImVec2(Size, Size), UV0, UV1);
     ImGui::GetWindowDrawList()->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }

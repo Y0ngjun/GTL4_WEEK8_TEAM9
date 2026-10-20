@@ -92,7 +92,7 @@ public:
 	uint32 AllocateShadowResources(bool bEditorWorld);
 	void ReleaseShadowResources(uint32 Index);
 	const FShadowResources* GetShadowResources(uint32 Index) const;
-	bool RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame, uint32 Resolution = DefaultShadowResolution);
+	bool RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame);
 
 	// 매 View 호출한다. 비지원/실패 시 입력을 비워 이전 World의 바인딩을 남기지 않는다.
 	bool BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported);
@@ -110,10 +110,8 @@ public:
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
 
-	// Pass 1: 한 면을 Clear하고 그린다.
-	// 호출자가 Pass.RequestIndex를 검사하고 해당 Request를 전달한다.
-	// false면 해당 그림자를 셰이딩에 사용하지 않는다.
-	bool DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height);
+	// 호출자가 Atlas를 Clear한 뒤 각 Map의 영역에 깊이를 그린다.
+	bool DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, ID3D11DepthStencilView* DSV, const FShadowAtlasRect& Rect);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }

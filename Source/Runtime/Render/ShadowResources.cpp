@@ -2,24 +2,44 @@
 #include "ShadowResources.h"
 #include "RenderCommand.h"
 
-bool FShadowResources::EnsureCapacity(uint32 Resolution, uint32 SliceCount, uint32 CubeCount)
+bool FShadowResources::EnsureAtlasCapacity(uint32 AtlasSize)
 {
-    if (Resolution == 0 || Resolution > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION || SliceCount > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION || CubeCount > D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION / FTextureCubeArray::FaceCount) return false;
-    FTextureArrayCreateInfo Info{Resolution, Resolution, DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_D32_FLOAT};
-    TUniquePtr<FTexture2DArray> New2D;
-    TUniquePtr<FTextureCubeArray> NewCube;
-    if (SliceCount && (!Depth2D || Depth2D->GetWidth() != Resolution || Depth2D->GetArraySize() < SliceCount))
+    if (AtlasSize == 0 || AtlasSize > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION)
     {
-        New2D = MakeUnique<FTexture2DArray>(RenderCommand::GetDevice(), Info, SliceCount);
-        if (!New2D->IsValid()) return false;
+        return false;
     }
-    if (CubeCount && (!DepthCube || DepthCube->GetWidth() != Resolution || DepthCube->GetCubeCount() < CubeCount))
+
+    if (DepthAtlas &&
+        DepthAtlas->GetWidth() == AtlasSize &&
+        DepthAtlas->GetHeight() == AtlasSize &&
+        DepthAtlas->GetSRV() &&
+        DepthAtlas->GetDSV())
     {
-        NewCube = MakeUnique<FTextureCubeArray>(RenderCommand::GetDevice(), Info, CubeCount);
-        if (!NewCube->IsValid()) return false;
+        return true;
     }
-    if (New2D) Depth2D = std::move(New2D);
-    if (NewCube) DepthCube = std::move(NewCube);
+
+    D3D11_TEXTURE2D_DESC Desc{};
+    Desc.Width = AtlasSize;
+    Desc.Height = AtlasSize;
+    Desc.MipLevels = 1;
+    Desc.ArraySize = 1;
+    Desc.Format = DXGI_FORMAT_R32_TYPELESS;
+    Desc.SampleDesc.Count = 1;
+    Desc.Usage = D3D11_USAGE_DEFAULT;
+    Desc.BindFlags =
+        D3D11_BIND_DEPTH_STENCIL |
+        D3D11_BIND_SHADER_RESOURCE;
+
+    auto NewAtlas = MakeUnique<FTexture2D>(RenderCommand::GetDevice(), Desc, static_cast<const void*>(nullptr));
+
+    if (!NewAtlas->GetRawPtr() ||
+        !NewAtlas->GetSRV() ||
+        !NewAtlas->GetDSV())
+    {
+        return false;
+    }
+
+    DepthAtlas = std::move(NewAtlas);
     return true;
 }
 

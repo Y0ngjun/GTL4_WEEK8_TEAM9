@@ -5,6 +5,7 @@
 #include "Containers/Map.h"
 #include "Render/ShadowFrameData.h"
 #include "Render/ShadowResources.h"
+#include "Render/ShadowAtlasAllocator.h"
 
 class UWorld;
 class FScene;
@@ -36,6 +37,8 @@ private:
     {
         FShadowFrameData Data;
         uint64 PreparedFrame = 0;
+
+        FShadowAtlasAllocator AtlasAllocator;
     };
     std::array<FWorldShadowFrame, MaxShadowResourceSlots> WorldShadowFrames;
     uint64 FrameNumber = 0;
@@ -44,6 +47,8 @@ private:
     void PreparePointShadow(UWorld& World, uint32 RequestIndex, FShadowFrameData& Frame);
     void CaptureWorld(UWorld& World);
     void BuildRenderQueue(const FSceneView& View, FSceneRenderData& Data);
+    bool AllocateShadowMaps(FWorldShadowFrame& Slot);
+    uint32 RegisterShadowMap(FShadowFrameData& Frame, uint32 LightRequestIndex, const FShadowInfo& Info, uint32 Resolution);
 
     struct FPrimitiveSnapshot
     {
