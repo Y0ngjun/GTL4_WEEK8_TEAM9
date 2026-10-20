@@ -8,7 +8,6 @@
 inline constexpr uint32 InvalidShadowResourceIndex = ~0u;
 // 동시 World 수의 고정 상한. 0번 Editor + 나머지 World의 빈 슬롯 순환에 사용한다.
 inline constexpr uint32 MaxShadowResourceSlots = 32;
-inline constexpr uint32 DefaultShadowResolution = 1024;
 
 // UI는 CPU Frame 정리 후 그려지므로 포인터 대신 Light UUID와 출력 위치만 보존한다.
 struct FShadowPreviewEntry

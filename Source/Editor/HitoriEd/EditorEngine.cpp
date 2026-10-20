@@ -901,7 +901,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
             ShadowResourceIndex = Context->ShadowResourceIndex;
             ShadowFrame = SceneRenderer.PrepareWorldShadows(ViewWorld, ShadowResourceIndex);
             if (ShadowFrame)
-                Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame);
+                Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame, ShadowFrame->Resolution);
         }
     }
     const bool bReadyForShading = Renderer->BindShadowResources(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);

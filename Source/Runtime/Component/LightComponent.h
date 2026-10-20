@@ -33,7 +33,9 @@ public:
 
 protected:
 	bool bCastShadow = true;
-	// Bias와 SlopeBias는 월드 거리 단위, MaxSlope는 tan(theta)의 무차원 상한이다.
+	// Bias는 월드 거리 단위다.
+	// SlopeBias는 무차원 k: Slope Bias = k * (T/2) * tan(theta), T는 쉐도우 맵 텍셀의 월드 크기. k = 1이 이론상 최소값이다.
+	// MaxSlope는 tan(theta)의 무차원 상한이다.
 	// 임시값: 실제 기본값은 각 Light의 그림자 구현 단계에서 정한다.
 	float ShadowBias = 0.0f;
 	float ShadowSlopeBias = 0.0f;

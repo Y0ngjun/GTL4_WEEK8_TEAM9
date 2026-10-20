@@ -5,9 +5,9 @@
 
 UDirectionalLightComponent::UDirectionalLightComponent()
 {
-    // 월드 거리 단위의 초기값. 실제 장면 크기와 해상도에 맞춘 품질 조정은 별도다.
+    // Bias는 월드 거리, SlopeBias는 텍셀 크기 배수 k(1 = 이론상 최소값)다.
     ShadowBias = 0.001f;
-    ShadowSlopeBias = 0.01f;
+    ShadowSlopeBias = 1.0f;
     ShadowMaxSlope = 2.0f;
 }
 

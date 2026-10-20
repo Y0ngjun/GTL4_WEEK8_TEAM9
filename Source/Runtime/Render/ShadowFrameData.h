@@ -60,6 +60,9 @@ struct FShadowFrameData
     // Light별 준비 함수가 완성된 조회 정보만 추가하고 Request.ShadowIndex를 연결한다.
     TArray<FShadowInfo> ShadowInfos;
 
+    // Depth 패스 해상도. Bias의 텍셀 크기(T)도 이 값으로 계산한다.
+    uint32 Resolution = DefaultShadowResolution;
+
     void ResetFrame()
     {
         ShadowInfos.Reset();

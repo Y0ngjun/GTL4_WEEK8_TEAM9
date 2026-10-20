@@ -3,6 +3,9 @@
 #include "LightInfo.h"
 #include "Math/Matrix.h"
 
+// Depth 패스 해상도와 Pass 2 Bias의 텍셀 크기 계산이 같은 값을 써야 한다.
+inline constexpr uint32 DefaultShadowResolution = 1024;
+
 // Pass 2 StructuredBuffer의 한 항목. Point의 면별 행렬은 CPU PassInfo에만 둔다.
 struct FShadowInfo
 {
@@ -11,13 +14,19 @@ struct FShadowInfo
     float InvRadius = 0.0f;
     uint32 ShadowMapIndex = 0;
     uint32 LightType = 0;
-    // Light별 준비 단계에서 월드 거리 설정을 비교할 정규화 깊이 단위로 바꾼다.
+    // Bias는 월드 거리 설정을 비교할 정규화 깊이 단위로 바꾼다.
     float Bias = 0.0f;
+    // 무차원 k. Slope Bias = k * (T/2) * tan(theta)이며 k = 1이 이론상 최소값이다.
     float SlopeBias = 0.0f;
     float MaxSlope = 0.0f;
-    float Padding[3] = {};
+    // 텍셀 절반(T/2)의 정규화 깊이 크기.
+    // Directional: 맵 전체에서 일정한 값 그대로 쓴다.
+    // Spot/Point: T가 라이트 거리에 비례하므로 tan(반각) / 해상도를 저장하고, 셰이더에서 ReceiverDepth를 곱한다.
+    float HalfTexelScale = 0.0f;
+    float Padding[2] = {};
 };
 static_assert(sizeof(FShadowInfo) == 112);
 static_assert(offsetof(FShadowInfo, LightPosition) == 64);
 static_assert(offsetof(FShadowInfo, ShadowMapIndex) == 80);
 static_assert(offsetof(FShadowInfo, MaxSlope) == 96);
+static_assert(offsetof(FShadowInfo, HalfTexelScale) == 100);

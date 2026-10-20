@@ -331,8 +331,10 @@ void FSceneRenderer::PreparePointShadow(UWorld& World, uint32 RequestIndex, FSha
     Info.ShadowMapIndex = Request.ShadowMapIndex;
     Info.LightType = static_cast<uint32>(ELightType::Point);
     Info.Bias = Light->GetShadowBias() * Info.InvRadius;
-    Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
+    Info.SlopeBias = Light->GetShadowSlopeBias();
     Info.MaxSlope = Light->GetShadowMaxSlope();
+    // 면 중심 기준 T = 2 * d * tan(45도) / Res. 면 가장자리 텍셀은 더 작으므로 중심값이 상한이다.
+    Info.HalfTexelScale = 1.0f / static_cast<float>(Frame.Resolution);
     Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
     Frame.ShadowInfos.Add(Info);
 }
@@ -374,8 +376,11 @@ void FSceneRenderer::PrepareSpotShadow(UWorld& World, uint32 RequestIndex, FShad
     Info.ShadowMapIndex = Request.ShadowMapIndex;
     Info.LightType = static_cast<uint32>(ELightType::Spot);
     Info.Bias = Light->GetShadowBias() * Info.InvRadius;
-    Info.SlopeBias = Light->GetShadowSlopeBias() * Info.InvRadius;
+    Info.SlopeBias = Light->GetShadowSlopeBias();
     Info.MaxSlope = Light->GetShadowMaxSlope();
+    // 중심축 기준 T = 2 * d * tan(반각) / Res.
+    const float TanHalfFov = std::sqrt(1.0f - Spot.CosOuterCone * Spot.CosOuterCone) / Spot.CosOuterCone;
+    Info.HalfTexelScale = TanHalfFov / static_cast<float>(Frame.Resolution);
     Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
     Frame.ShadowInfos.Add(Info);
     Frame.ShadowDepthPassInfos.Add(std::move(Pass));
@@ -425,8 +430,11 @@ void FSceneRenderer::PrepareDirectionalShadow(UWorld& World, uint32 RequestIndex
     // Orthographic 깊이는 선형이므로 월드 Bias를 Far-Near로 나눈다.
     const float InvDepthRange = 1.0f / (Projection.FarClip - Projection.NearClip);
     Info.Bias = Light->GetShadowBias() * InvDepthRange;
-    Info.SlopeBias = Light->GetShadowSlopeBias() * InvDepthRange;
+    Info.SlopeBias = Light->GetShadowSlopeBias();
     Info.MaxSlope = Light->GetShadowMaxSlope();
+    // Orthographic은 텍셀 크기가 맵 전체에서 일정하다: T = OrthoWidth / Res.
+    const float TexelSize = Projection.OrthoWidth / static_cast<float>(Frame.Resolution);
+    Info.HalfTexelScale = 0.5f * TexelSize * InvDepthRange;
     Request.ShadowIndex = static_cast<uint32>(Frame.ShadowInfos.Num());
     Frame.ShadowInfos.Add(Info);
     Frame.ShadowDepthPassInfos.Add(std::move(Pass));

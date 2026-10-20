@@ -48,9 +48,9 @@ namespace
 
 USpotLightComponent::USpotLightComponent()
 {
-    // 초기 조정 기준: 반경 10, 그림자 해상도 1024. Bias/SlopeBias는 월드 거리다.
+    // Bias는 월드 거리, SlopeBias는 텍셀 크기 배수 k(1 = 이론상 최소값)다.
     ShadowBias = 0.001f;
-    ShadowSlopeBias = 0.01f;
+    ShadowSlopeBias = 1.0f;
     ShadowMaxSlope = 2.0f;
 }
 
