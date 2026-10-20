@@ -8,7 +8,8 @@ class UDirectionalLightComponent : public ULightComponent
 {
 	DECLARE_CLASS(UDirectionalLightComponent, ULightComponent)
 	REFLECT_START(UDirectionalLightComponent)
-		REFLECT_END()
+		PROPERTY(LightSourceAngle)
+	REFLECT_END()
 
 public:
 	UDirectionalLightComponent();
@@ -19,5 +20,10 @@ public:
 
 	void DrawDebug(FLineBatcher* LineBatcher) const;
 
+	float GetLightSourceAngle() const { return LightSourceAngle; }
+	void SetLightSourceAngle(float Value) { LightSourceAngle = Value; MarkSceneProxyDirty(); }
+
 private:
+	// 광원의 각지름(도). 태양 ≈ 0.5357. 0이면 딱딱한 그림자.
+	float LightSourceAngle = 0.5357f;
 };

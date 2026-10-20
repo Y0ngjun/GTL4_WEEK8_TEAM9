@@ -27,11 +27,20 @@ struct FShadowInfo
     float HalfTexelScale = 0.0f;
     // 무차원 k. Normal Offset = k * (T/2) * sin(theta)이며 k = 1이 이론상 최소값이다.
     float NormalOffset = 0.0f;
-    float Padding = 0.0f;
+    // PCSS 반영 폭 계수. Light 종류마다 단위가 다르다.
+    // Directional: 깊이 차 → UV 반경. tan(각지름/2) * 깊이 범위 / 투영 폭.
+    // Spot: (zR - zB) / (zB * zR) → UV 반경. 광원 반지름 / (2 * 감쇠 반경 * tan(반각)).
+    // Point: (zR - zB) / (zB * zR) → 방향 벡터 접평면 반경. 광원 반지름 / 감쇠 반경.
+    float PenumbraScale = 0.0f;
+    // Spot/Point 차폐물 탐색에서 가장 먼 차폐물 위치로 쓰는 정규화 Near 깊이.
+    float PCSSNearDepth = 0.0f;
+    float Padding[3] = {};
 };
-static_assert(sizeof(FShadowInfo) == 112);
+static_assert(sizeof(FShadowInfo) == 128);
 static_assert(offsetof(FShadowInfo, LightPosition) == 64);
 static_assert(offsetof(FShadowInfo, ShadowMapIndex) == 80);
 static_assert(offsetof(FShadowInfo, MaxSlope) == 96);
 static_assert(offsetof(FShadowInfo, HalfTexelScale) == 100);
 static_assert(offsetof(FShadowInfo, NormalOffset) == 104);
+static_assert(offsetof(FShadowInfo, PenumbraScale) == 108);
+static_assert(offsetof(FShadowInfo, PCSSNearDepth) == 112);

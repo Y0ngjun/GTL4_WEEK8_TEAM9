@@ -569,6 +569,9 @@ bool BuildPointSetup(const FPointLightSceneProxy& Light, uint32 Resolution, FLig
     // 면 중심 기준 T = 2 * d * tan(45도) / Res. 면 가장자리 텍셀은 더 작으므로 중심값이 상한이다.
     Info.HalfTexelScale = 1.0f / static_cast<float>(Resolution);
     Info.NormalOffset = Light.GetShadowNormalOffset();
+    // PCSS 커널 각반경 = 광원 반지름 * (dR - dB) / (dB * dR). 정규화 깊이(거리 / 감쇠 반경)로 쓰면 1 / 감쇠 반경이 남는다.
+    Info.PenumbraScale = std::max(Light.GetSourceRadius(), 0.0f) * Info.InvRadius;
+    Info.PCSSNearDepth = Projection.NearClip * Info.InvRadius;
     return true;
 }
 
@@ -609,6 +612,9 @@ bool BuildSpotSetup(const FSpotLightSceneProxy& Light, uint32 Resolution, FLight
     Info.MaxSlope = Light.GetShadowMaxSlope();
     Info.HalfTexelScale = TanHalfFov / static_cast<float>(Resolution);
     Info.NormalOffset = Light.GetShadowNormalOffset();
+    // 거리 d의 섀도맵 UV 1은 월드 2 * d * tan(반각)이다. PCSS 커널 UV = 광원 반지름 * (zR - zB) / (zB * zR) / (2 * 감쇠 반경 * tan(반각)).
+    Info.PenumbraScale = std::max(Light.GetSourceRadius(), 0.0f) / (2.0f * Spot.AttenuationRadius * TanHalfFov);
+    Info.PCSSNearDepth = Projection.NearClip * Info.InvRadius;
     return true;
 }
 
@@ -660,6 +666,9 @@ bool BuildDirectionalSetup(UWorld& World, const FDirectionalLightSceneProxy& Lig
     const float TexelSize = Projection.OrthoWidth / static_cast<float>(Resolution);
     Info.HalfTexelScale = 0.5f * TexelSize;
     Info.NormalOffset = Light.GetShadowNormalOffset();
+    // PCSS 커널 반경(월드) = 깊이 차 * tan(각지름/2). 깊이는 Far-Near, 가로는 OrthoWidth로 정규화한다.
+    const float HalfAngle = FMath::DegreesToRadians(std::max(Light.GetLightSourceAngle(), 0.0f)) * 0.5f;
+    Info.PenumbraScale = std::tan(HalfAngle) * (Projection.FarClip - Projection.NearClip) / Projection.OrthoWidth;
     return true;
 }
 }

@@ -78,13 +78,16 @@ public:
 		const UDirectionalLightComponent* Light = static_cast<const UDirectionalLightComponent*>(Component);
 		Info = Light->GetDirectionalLightInfo();
 		UpdateShadowSettings(Light);
+		LightSourceAngle = Light->GetLightSourceAngle();
 		bVisible = Light->IsLightVisible();
 	}
 
 	const FDirectionalLightInfo& GetInfo() const { return Info; }
+	float GetLightSourceAngle() const { return LightSourceAngle; }
 
 private:
 	FDirectionalLightInfo Info;
+	float LightSourceAngle = 0.0f;
 };
 
 class FPointLightSceneProxy final : public FLightSceneProxy
@@ -97,13 +100,16 @@ public:
 		const UPointLightComponent* Light = static_cast<const UPointLightComponent*>(Component);
 		Info = Light->GetPointLightInfo();
 		UpdateShadowSettings(Light);
+		SourceRadius = Light->GetSourceRadius();
 		bVisible = Light->IsLightVisible();
 	}
 
 	const FPointLightInfo& GetInfo() const { return Info; }
+	float GetSourceRadius() const { return SourceRadius; }
 
 private:
 	FPointLightInfo Info;
+	float SourceRadius = 0.0f;
 };
 
 class FSpotLightSceneProxy final : public FLightSceneProxy
@@ -116,6 +122,7 @@ public:
 		const USpotLightComponent* Light = static_cast<const USpotLightComponent*>(Component);
 		Info = Light->GetSpotLightInfo();
 		UpdateShadowSettings(Light);
+		SourceRadius = Light->GetSourceRadius();
         // Outer cone과 감쇠 반경으로 제한된 조명 범위를 감싸는 구를 계산한다.
         if (CachedRadius != Info.AttenuationRadius || CachedCosOuter != Info.CosOuterCone)
         {
@@ -139,9 +146,11 @@ public:
 	const FSpotLightInfo& GetInfo() const { return Info; }
     const FVector& GetCullingSphereCenter() const { return CullingSphereCenter; }
     float GetCullingSphereRadius() const { return CullingSphereRadius; }
+	float GetSourceRadius() const { return SourceRadius; }
 
 private:
 	FSpotLightInfo Info;
+	float SourceRadius = 0.0f;
     FVector CullingSphereCenter{};
     float CullingSphereRadius = 0.0f;
     float SphereOffset = 0.0f;

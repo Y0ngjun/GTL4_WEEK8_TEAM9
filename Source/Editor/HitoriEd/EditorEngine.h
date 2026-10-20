@@ -24,10 +24,10 @@
 #include "Editor/Details/DetailsPanel.h"
 #include "Editor/EditorControls/EditorControlsPanel.h"
 #include "Editor/Settings/SettingsPanel.h"
-#include "Editor/DebugTools/DebugPanel.h"
+
 #include "Editor/Viewports/ViewportsPanel.h"
 #include "Editor/ContentDrawer/ContentDrawerPanel.h"
-
+#include "Editor/Debug/DebugPanel.h"
 #include "Editor/Rendering/Outline.h"
 #include "Editor/Rendering/OutLineRenderer.h"
 #include "Editor/Outliner/OutlinerPanel.h"

@@ -17,6 +17,8 @@ void UPointLightComponent::PostEditChangeProperty(const FProperty& Property)
 	// 음수 반경은 감쇠 계산을 뒤집으므로 막는다.
 	if (AttenuationRadius < 0.0f)
 		AttenuationRadius = 0.0f;
+	if (SourceRadius < 0.0f)
+		SourceRadius = 0.0f;
 }
 
 FPointLightInfo UPointLightComponent::GetPointLightInfo() const
