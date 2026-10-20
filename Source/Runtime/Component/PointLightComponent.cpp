@@ -4,9 +4,9 @@
 
 UPointLightComponent::UPointLightComponent()
 {
-    // Spot과 동일한 거리 깊이 비교에 사용할 월드 거리 초기값.
+    // Bias는 월드 거리, SlopeBias는 텍셀 크기 배수 k(1 = 이론상 최소값)다.
     ShadowBias = 0.001f;
-    ShadowSlopeBias = 0.01f;
+    ShadowSlopeBias = 1.0f;
     ShadowMaxSlope = 2.0f;
 }
 

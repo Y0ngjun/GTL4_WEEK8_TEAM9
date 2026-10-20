@@ -809,10 +809,12 @@ bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShad
     Resources.bReadyForShading = false;
     Resources.NumShadowInfos = 0;
     Resources.PreviewEntries.Reset();
-    if (Frame.ShadowDepthPassInfos.IsEmpty()) return false;
+    // 캐시된 Light만 있으면 이번 프레임 패스가 없을 수 있다. 조회할 Light가 없을 때만 그림자를 끈다.
+    if (Frame.ShadowInfos.IsEmpty()) return false;
 
-    uint32 SliceCount = 0;
-    uint32 CubeCount = 0;
+    // 캐시된 Light의 슬롯도 배열 안에 있어야 하므로 패스가 아니라 SceneRenderer의 슬롯 사용 범위로 크기를 정한다.
+    const uint32 SliceCount = Frame.Required2DSlices;
+    const uint32 CubeCount = Frame.RequiredCubes;
     for (const FShadowDepthPassInfo& Pass : Frame.ShadowDepthPassInfos)
     {
         if (Pass.RequestIndex >= static_cast<uint32>(Frame.ShadowRequestsPerLight.Num())) return false;
@@ -820,14 +822,12 @@ bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShad
         if (!Request.Light) return false;
         if (Request.Light->GetLightType() == ELightType::Point)
         {
-            if (Request.ShadowMapIndex >= D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION / FTextureCubeArray::FaceCount || Pass.ArraySlice / FTextureCubeArray::FaceCount != Request.ShadowMapIndex) return false;
-            CubeCount = std::max(CubeCount, Request.ShadowMapIndex + 1);
+            if (Request.ShadowMapIndex >= CubeCount || Pass.ArraySlice / FTextureCubeArray::FaceCount != Request.ShadowMapIndex) return false;
         }
         else
         {
             if (Request.Light->GetLightType() != ELightType::Directional && Request.Light->GetLightType() != ELightType::Spot) return false;
-            if (Pass.ArraySlice != Request.ShadowMapIndex || Pass.ArraySlice >= D3D11_REQ_TEXTURE2D_ARRAY_AXIS_DIMENSION) return false;
-            SliceCount = std::max(SliceCount, Pass.ArraySlice + 1);
+            if (Pass.ArraySlice != Request.ShadowMapIndex || Pass.ArraySlice >= SliceCount) return false;
         }
     }
     if (!Resources.EnsureCapacity(Resolution, SliceCount, CubeCount)) return false;

@@ -147,6 +147,15 @@ bool FSettingsPanel::SaveSettings() const
 	File << "ExposureEV=" << Settings.ExposureEV << "\n";
 	File << "\n";
 
+	File << "[ShadowCulling]\n";
+	File << "CullLightsByView=" << Settings.ShadowCulling.bCullLightsByView << "\n";
+	File << "ShadowDistance=" << Settings.ShadowCulling.ShadowDistance << "\n";
+	File << "MinLightScreenRadius=" << Settings.ShadowCulling.MinLightScreenRadius << "\n";
+	File << "CullCastersByView=" << Settings.ShadowCulling.bCullCastersByView << "\n";
+	File << "MinCasterTexels=" << Settings.ShadowCulling.MinCasterTexels << "\n";
+	File << "CacheShadowMaps=" << Settings.ShadowCulling.bCacheShadowMaps << "\n";
+	File << "\n";
+
 	File << "[Grid]\n";
 	File << "GridSpacing=" << Settings.GridSpacing << "\n";
 	File << "\n";
@@ -288,6 +297,13 @@ bool FSettingsPanel::LoadSettings()
 				else if (Key == "LinearWorkflow") Settings.bLinearWorkflow = std::stoi(ValueStr);
 				else if (Key == "ToneMapping") Settings.bToneMapping = std::stoi(ValueStr);
 				else if (Key == "ExposureEV") Settings.ExposureEV = std::stof(ValueStr);
+
+				else if (Key == "CullLightsByView") Settings.ShadowCulling.bCullLightsByView = std::stoi(ValueStr);
+				else if (Key == "ShadowDistance") Settings.ShadowCulling.ShadowDistance = std::stof(ValueStr);
+				else if (Key == "MinLightScreenRadius") Settings.ShadowCulling.MinLightScreenRadius = std::stof(ValueStr);
+				else if (Key == "CullCastersByView") Settings.ShadowCulling.bCullCastersByView = std::stoi(ValueStr);
+				else if (Key == "MinCasterTexels") Settings.ShadowCulling.MinCasterTexels = std::stof(ValueStr);
+				else if (Key == "CacheShadowMaps") Settings.ShadowCulling.bCacheShadowMaps = std::stoi(ValueStr);
 
 				else if (Key == "GridSpacing") Settings.GridSpacing = std::stoi(ValueStr);
 

@@ -131,6 +131,7 @@ bool UEditorEngine::Init()
 	OutlineRenderer->Init(Renderer);
 
 	SettingsPanel = EditorUI->AddEditorPanel<FSettingsPanel>();
+	DebugPanel = EditorUI->AddEditorPanel<FDebugPanel>();
 
 	//ToolbarPanel->SetPlayCallback([this]() { RequestPlaySession(); });
 	//ToolbarPanel->SetStopCallback([this]() { RequestEndPlayMap(); });
@@ -237,6 +238,15 @@ bool UEditorEngine::Init()
         const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
         return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber() ? Resources : nullptr;
     });
+	// Debug 패널은 Settings가 소유한 그림자 설정을 직접 고치고, World별 결과를 읽는다.
+	DebugPanel->SetShadowCullingSettings(&SettingsPanel->GetMutableSettings().ShadowCulling);
+	DebugPanel->SetHasPlayWorldQuery([this]() { return PlayWorld != nullptr; });
+	DebugPanel->SetShadowStatsQuery([this](bool bPlayWorld) -> const FShadowCullingStats*
+	{
+		UWorld* StatsWorld = bPlayWorld ? PlayWorld : EditorWorld;
+		const FWorldContext* Context = StatsWorld ? GetWorldContextFromWorld(StatsWorld) : nullptr;
+		return Context ? SceneRenderer.GetShadowCullingStats(Context->ShadowResourceIndex) : nullptr;
+	});
 	SettingsPanel->SetHasLitViewQuery([this]()
 	{
 		for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
@@ -448,6 +458,24 @@ void UEditorEngine::RenderViewports()
     bPIEWindowRendered = false;
     const bool bRenderPIEWindow = IsPIEInWindow() && UpdatePIEWindowTargets();
     SceneRenderer.BeginFrame();
+    SceneRenderer.SetShadowCullingSettings(SettingsPanel->GetSettings().ShadowCulling);
+    // 쉐도우 맵은 World의 첫 View를 그릴 때 준비되므로, 그 전에 그림자를 쓰는 View를 모두 등록한다.
+    for (int32 ViewIndex = 0; ViewIndex < ViewportsPanel->GetSlotCount(); ++ViewIndex)
+    {
+        FViewport& Viewport = *ViewportsPanel->GetViewport(ViewIndex);
+        FViewportClient* Client = Viewport.GetActiveClient();
+        if (!Viewport.IsVisible() || !Client || !Client->HasCamera())
+            continue;
+        const FSceneView View = Viewport.CreateSceneView();
+        if (ViewSupportsShadows(View))
+            SceneRenderer.AddShadowView(*Client->GetWorld(), View);
+    }
+    if (bRenderPIEWindow && PIEViewport->GetActiveClient()->HasCamera())
+    {
+        const FSceneView View = PIEViewport->CreateSceneView();
+        if (ViewSupportsShadows(View))
+            SceneRenderer.AddShadowView(*PIEViewport->GetActiveClient()->GetWorld(), View);
+    }
     for (int32 ViewIndex = 0; ViewIndex < ViewportsPanel->GetSlotCount(); ++ViewIndex)
     {
         FViewport& Viewport = *ViewportsPanel->GetViewport(ViewIndex);
@@ -874,6 +902,14 @@ void UEditorEngine::UpdateGizmoAndPicking()
 
 }
 
+// Lit + Phong이고 그림자를 가리는 시각화가 꺼진 View만 그림자를 쓴다.
+bool UEditorEngine::ViewSupportsShadows(const FSceneView& View) const
+{
+    const FEditorSettings& Settings = SettingsPanel->GetSettings();
+    return View.RenderMode.ViewMode == EViewMode::Lit && View.RenderMode.ShadingModel == EShadingModel::Phong && Settings.bDrawPrimitives
+        && !Settings.bDepthView && !Settings.bVisualizeTileLightCount;
+}
+
 // View 행렬로 Scene·Grid·Gizmo·텍스트·Outline을 렌더한다.
 void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FSceneView& View, FEditorViewportClient* OverlayClient)
 {
@@ -887,9 +923,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
 	// 지원 View만 공유 그림자를 요청한다. 비지원 View는 다른 View의 결과를 지우지 않는다.
-    const FEditorSettings& ShadowSettings = SettingsPanel->GetSettings();
-    const bool bSupportsShadows = View.RenderMode.ViewMode == EViewMode::Lit && View.RenderMode.ShadingModel == EShadingModel::Phong && ShadowSettings.bDrawPrimitives 
-																&& !ShadowSettings.bDepthView && !ShadowSettings.bVisualizeTileLightCount;
+    const bool bSupportsShadows = ViewSupportsShadows(View);
     uint32 ShadowResourceIndex = InvalidShadowResourceIndex;
     const FShadowFrameData* ShadowFrame = nullptr;
     if (bSupportsShadows)
@@ -900,8 +934,10 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
                 Context->ShadowResourceIndex = Renderer->AllocateShadowResources(Context->WorldType == EWorldType::Editor);
             ShadowResourceIndex = Context->ShadowResourceIndex;
             ShadowFrame = SceneRenderer.PrepareWorldShadows(ViewWorld, ShadowResourceIndex);
-            if (ShadowFrame)
-                Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame);
+            // 그리다 실패하면 GPU 쉐도우 맵 내용을 믿을 수 없으므로 캐시를 버린다.
+            if (ShadowFrame && !Renderer->RenderWorldShadows(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), *ShadowFrame, ShadowFrame->Resolution)
+                && !ShadowFrame->ShadowInfos.IsEmpty())
+                SceneRenderer.InvalidateShadowCache(ShadowResourceIndex);
         }
     }
     const bool bReadyForShading = Renderer->BindShadowResources(ShadowResourceIndex, SceneRenderer.GetFrameNumber(), bSupportsShadows);

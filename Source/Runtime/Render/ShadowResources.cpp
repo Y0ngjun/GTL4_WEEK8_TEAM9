@@ -18,6 +18,15 @@ bool FShadowResources::EnsureCapacity(uint32 Resolution, uint32 SliceCount, uint
         NewCube = MakeUnique<FTextureCubeArray>(RenderCommand::GetDevice(), Info, CubeCount);
         if (!NewCube->IsValid()) return false;
     }
+    // 같은 해상도로 배열만 늘릴 때는 기존 slice를 옮겨 쉐도우 맵 캐시를 유지한다.
+    // 해상도가 바뀌면 옮길 수 없고, SceneRenderer가 해상도 변경을 보고 캐시 전체를 무효로 한다.
+    ID3D11DeviceContext* Context = RenderCommand::GetContext();
+    if (New2D && Depth2D && Depth2D->GetWidth() == Resolution)
+        for (uint32 Slice = 0; Slice < Depth2D->GetArraySize(); ++Slice)
+            Context->CopySubresourceRegion(New2D->GetRawPtr(), Slice, 0, 0, 0, Depth2D->GetRawPtr(), Slice, nullptr);
+    if (NewCube && DepthCube && DepthCube->GetWidth() == Resolution)
+        for (uint32 Slice = 0; Slice < DepthCube->GetCubeCount() * FTextureCubeArray::FaceCount; ++Slice)
+            Context->CopySubresourceRegion(NewCube->GetRawPtr(), Slice, 0, 0, 0, DepthCube->GetRawPtr(), Slice, nullptr);
     if (New2D) Depth2D = std::move(New2D);
     if (NewCube) DepthCube = std::move(NewCube);
     return true;
