@@ -921,7 +921,11 @@ bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSce
     Constants.CascadeViewOrigin = View.RenderLocation;
     Constants.CascadeViewForward = View.CameraForward;
     for (uint32 Index = 0; Index < Constants.CascadeCount; ++Index)
-        Constants.CascadeDepthRanges[Index] = FVector4(Frame.CascadeSplits[Index].NearDepth, Frame.CascadeSplits[Index].FarDepth, 0.0f, 0.0f);
+    {
+        const FShadowCascadeSplit& Split = Frame.CascadeSplits[Index];
+        const float BlendWidth = Index + 1 < Constants.CascadeCount ? Split.FarDepth - Frame.CascadeSplits[Index + 1].ProjectionNearDepth : 0.0f;
+        Constants.CascadeDepthRanges[Index] = FVector4(Split.NearDepth, Split.FarDepth, BlendWidth, 0.0f);
+    }
     RenderCommand::UpdateBufferData(Resources.SelectionCB.get(), &Constants);
     Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
     return true;

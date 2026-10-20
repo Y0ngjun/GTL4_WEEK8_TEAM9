@@ -47,9 +47,11 @@ struct FShadowDepthPassInfo
 
 struct FShadowCascadeSplit
 {
-    // RenderLocation 기준 전방 축의 선형 깊이. 현재는 겹침 없는 선택 구간과 투영 구간이 같다.
+    // RenderLocation 기준 전방 축의 선형 깊이. Cascade 선택 경계는 겹치지 않는다.
     float NearDepth = 0.0f;
     float FarDepth = 0.0f;
+    // 앞 Cascade의 혼합 시작점까지 확장한 투영용 near. 투영 far는 FarDepth와 같다.
+    float ProjectionNearDepth = 0.0f;
     // subfrustum을 감싸는 원래 구. Snapping은 투영의 가로·세로 중심에만 적용한다.
     FVector SphereCenter;
     float SphereRadius = 0.0f;

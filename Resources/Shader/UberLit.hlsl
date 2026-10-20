@@ -175,7 +175,7 @@ cbuffer DirectionalShadowConstants : register(b5)
     float CascadeOriginPadding;
     float3 CascadeViewForward;
     float CascadeForwardPadding;
-    float4 CascadeDepthRanges[8]; // xy=RenderLocation 기준 near/far, zw=padding
+    float4 CascadeDepthRanges[8]; // xy=선택 near/far, z=혼합 폭, w=padding
 };
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
 Texture2DArray<float> ShadowDepth2D : register(t13);
@@ -228,14 +228,8 @@ uint SelectDirectionalShadowInfo(uint ShadowIndex, float3 WorldPosition)
 }
 
 // Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
-float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
 {
-#if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
-    // CPU는 이 View의 Directional 바인딩이 준비된 경우에만 유효 번호를 전달한다.
-    if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
-
-    uint InfoIndex = SelectDirectionalShadowInfo(ShadowIndex, WorldPosition);
-    if (InfoIndex == 0xffffffffu) return 1.0f;
     FShadowInfo Info = DirectionalShadowInfos[InfoIndex];
     float3 N = normalize(GeoNormal);
     float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
@@ -251,6 +245,32 @@ float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 Worl
     float StoredDepth = DirectionalShadowDepth.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
+}
+
+float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+#if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
+    // CPU는 이 View의 Directional 바인딩이 준비된 경우에만 유효 번호를 전달한다.
+    if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
+    uint InfoIndex = SelectDirectionalShadowInfo(ShadowIndex, WorldPosition);
+    if (InfoIndex == 0xffffffffu) return 1.0f;
+    float Shadow = SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+    uint CascadeIndex = InfoIndex - ShadowIndex;
+    if (bUseCSM != 0u && CascadeIndex + 1u < CascadeCount)
+    {
+        float FarDepth = CascadeDepthRanges[CascadeIndex].y;
+        float BlendWidth = CascadeDepthRanges[CascadeIndex].z;
+        float Depth = dot(WorldPosition - CascadeViewOrigin, CascadeViewForward);
+        [branch]
+        if (BlendWidth > 0.0f && Depth >= FarDepth - BlendWidth)
+        {
+            float Weight = saturate((Depth - (FarDepth - BlendWidth)) / BlendWidth);
+            float NextShadow = SampleDirectionalShadow(InfoIndex + 1u, WorldPosition, GeoNormal, ToLightDirection);
+            // 깊이 자체가 아니라 각 행렬·bias로 비교한 그림자 판정값을 혼합한다.
+            Shadow = lerp(Shadow, NextShadow, Weight);
+        }
+    }
+    return Shadow;
 #else
     return 1.0f;
 #endif

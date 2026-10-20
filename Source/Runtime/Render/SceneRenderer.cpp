@@ -675,6 +675,7 @@ void FSceneRenderer::BuildCascadeSplits(const FSceneView& View, const FShadowCas
     const float Far = std::min(ProjectionFar, Settings.MaxDistance);
     if (Far <= Near) return;
     const float Lambda = std::clamp(Settings.SplitLambda, 0.0f, 1.0f);
+    const float BlendRatio = std::clamp(Settings.BlendRatio, 0.0f, 0.5f);
     float PreviousDepth = Near;
     for (uint32 Index = 0; Index < Settings.Count; ++Index)
     {
@@ -683,8 +684,13 @@ void FSceneRenderer::BuildCascadeSplits(const FSceneView& View, const FShadowCas
         const float LogDepth = Near * std::pow(Far / Near, Fraction);
         FShadowCascadeSplit Split;
         Split.NearDepth = PreviousDepth;
+        Split.ProjectionNearDepth = Split.NearDepth;
+        if (Index > 0)
+        {
+            const FShadowCascadeSplit& Previous = OutSplits[Index - 1];
+            Split.ProjectionNearDepth -= BlendRatio * (Previous.FarDepth - Previous.NearDepth);
+        }
 
-        // todo: 아직 blend band는 구현하지 않았다
         // todo: 현재는 가중평균으로 계산하지만, 추후 UE 방식의 PSSM으로 적용할 예정
         Split.FarDepth = Index + 1 == Settings.Count ? Far : UniformDepth + Lambda * (LogDepth - UniformDepth);
         PreviousDepth = Split.FarDepth;
@@ -713,13 +719,13 @@ void FSceneRenderer::BuildCascadeProjections(const FSceneView& View, const FVect
     for (FShadowCascadeSplit& Split : Splits)
     {
         // 카메라 공간에서 계산하여 같은 투영·분할의 반지름이 카메라 이동·회전에 의존하지 않게 한다.
-        const float NearScale = View.IsOrthographic() ? 1.0f : Split.NearDepth;
+        const float NearScale = View.IsOrthographic() ? 1.0f : Split.ProjectionNearDepth;
         const float FarScale = View.IsOrthographic() ? 1.0f : Split.FarDepth;
         const float NearDiagonalSquared = NearScale * NearScale * DiagonalScaleSquared;
         const float FarDiagonalSquared = FarScale * FarScale * DiagonalScaleSquared;
-        const float Length = Split.FarDepth - Split.NearDepth;
-        const float CenterDepth = std::clamp((Split.NearDepth + Split.FarDepth) * 0.5f + (FarDiagonalSquared - NearDiagonalSquared) / (2.0f * Length), Split.NearDepth, Split.FarDepth);
-        const float NearOffset = CenterDepth - Split.NearDepth;
+        const float Length = Split.FarDepth - Split.ProjectionNearDepth;
+        const float CenterDepth = std::clamp((Split.ProjectionNearDepth + Split.FarDepth) * 0.5f + (FarDiagonalSquared - NearDiagonalSquared) / (2.0f * Length), Split.ProjectionNearDepth, Split.FarDepth);
+        const float NearOffset = CenterDepth - Split.ProjectionNearDepth;
         const float FarOffset = Split.FarDepth - CenterDepth;
         const float Radius = std::sqrt(std::max(NearOffset * NearOffset + NearDiagonalSquared, FarOffset * FarOffset + FarDiagonalSquared));
         Split.SphereCenter = View.RenderLocation + View.CameraForward * CenterDepth;

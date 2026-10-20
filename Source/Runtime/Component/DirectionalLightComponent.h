@@ -12,6 +12,7 @@ class UDirectionalLightComponent : public ULightComponent
         PROPERTY(CascadeCount)
         PROPERTY(CascadeMaxDistance)
         PROPERTY(CascadeSplitLambda)
+        PROPERTY(CascadeBlendRatio)
     REFLECT_END()
 
 public:
@@ -31,4 +32,5 @@ private:
     int32 CascadeCount = 4;
     float CascadeMaxDistance = 100.0f;
     float CascadeSplitLambda = 0.5f;
+    float CascadeBlendRatio = 0.1f;
 };

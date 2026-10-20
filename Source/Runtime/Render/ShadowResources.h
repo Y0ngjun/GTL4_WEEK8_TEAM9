@@ -51,7 +51,7 @@ struct FShadowResources
     bool EnsureCapacity(uint32 Resolution, uint32 SliceCount, uint32 CubeCount);
 };
 
-// HLSL b5. 배열 원소는 CB의 16-byte 정렬에 맞춘다. xy=near/far, zw=padding.
+// HLSL b5. 배열 원소는 CB의 16-byte 정렬에 맞춘다. xy=선택 near/far, z=혼합 폭, w=padding.
 struct FDirectionalShadowConstants
 {
     uint32 bUseCSM = 0;
