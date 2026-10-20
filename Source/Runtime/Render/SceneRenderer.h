@@ -54,11 +54,10 @@ class FSceneRenderer
 public:
     void BeginFrame();
     uint64 GetFrameNumber() const { return FrameNumber; }
-    // 캐싱 중에는 쉐도우 맵 내용이 카메라에 의존하면 안 되므로 View 기반 Caster 컬링을 끈다.
+    // 설정은 보존하고, View 기반 caster 컬링의 캐시 제한은 각 준비 경로에서 적용한다.
     void SetShadowCullingSettings(const FShadowCullingSettings& Settings)
     {
         ShadowCullingSettings = Settings;
-        if (ShadowCullingSettings.bCacheShadowMaps) ShadowCullingSettings.bCullCastersByView = false;
     }
     // 이번 프레임에 그림자를 쓰는 View를 PrepareWorldShadows 전에 모두 등록한다.
     // 쉐도우 맵은 World의 모든 View가 공유하므로 View 컬링은 등록된 View의 합집합으로 판정한다.
@@ -67,7 +66,7 @@ public:
     // 같은 자원 슬롯은 이번 프레임에 한 번만 준비한다. World 교체 전 ReleaseWorldShadows가 필요하다.
     const FShadowFrameData* PrepareWorldShadows(UWorld& World, uint32 ResourceIndex);
     // 캐시를 사용하지 않는 출력은 호출마다 준비한다. 호출 시점은 Renderer가 결정한다.
-    void PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes);
+    void PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes, const FSceneView* View = nullptr);
     const FShadowFrameData& GetWorldShadowFrame(uint32 ResourceIndex) const { return WorldShadowFrames[ResourceIndex].Data; }
     void ReleaseWorldShadows(uint32 ResourceIndex);
     // GPU 쉐도우 맵 내용을 믿을 수 없을 때(렌더 실패 등) 호출한다. 다음 준비에서 모든 면을 다시 그린다.
@@ -83,6 +82,9 @@ public:
     // Scene의 Proxy 갱신 후 호출한다. 자료 보관과 프레임당 호출 제어는 호출자가 담당한다.
     // Light 단위 컬링(강도, View, 거리, 화면 크기)을 여기서 한다. 출력 위치는 아직 배정하지 않는다.
     void BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes);
+    void BuildCascadeSplits(const FSceneView& View, const FShadowCascadeSettings& Settings, TArray<FShadowCascadeSplit>& OutSplits);
+    void BuildCascadeProjections(const FSceneView& View, const FVector& LightDirection, uint32 Resolution, TArray<FShadowCascadeSplit>& Splits);
+    void BuildCascadeCasterQueues(UWorld& World, uint32 RequestIndex, TArray<FShadowCascadeSplit>& Splits, uint32 Resolution, FShadowCullingStats& Stats);
     // Scene BVH가 최신이고 Pass.Frustum이 채워진 상태에서 호출한다.
     // Caster 단위 컬링(플래그, 라이트 프러스텀, 그림자 볼륨 ∩ View, 쉐도우 맵 상 크기)을 한다.
     // todo: 현재는 LOD 0만 사용한다.

@@ -282,6 +282,13 @@ bool UEditorEngine::Init()
 	// Debug 패널은 Settings가 소유한 그림자 설정을 직접 고치고, World별 결과를 읽는다.
 	DebugPanel->SetShadowCullingSettings(&SettingsPanel->GetMutableSettings().ShadowCulling);
 	DebugPanel->SetHasPlayWorldQuery([this]() { return PlayWorld != nullptr; });
+	DebugPanel->SetDirectionalStatsQuery([this]() -> const FShadowCullingStats*
+	{
+		const FViewport* Selected = ViewportsPanel->GetViewport(ViewportsPanel->GetActiveViewIndex());
+		if (!Selected || !Selected->IsVisible() || Selected->GetGameClient()) return nullptr;
+		const FShadowResources& Resources = Selected->GetDirectionalShadow();
+		return Resources.RenderedFrame == SceneRenderer.GetFrameNumber() && Resources.bDepthReady ? &Resources.CullingStats : nullptr;
+	});
 	DebugPanel->SetShadowStatsQuery([this](bool bPlayWorld) -> const FShadowCullingStats*
 	{
 		UWorld* StatsWorld = bPlayWorld ? PlayWorld : EditorWorld;
@@ -977,7 +984,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
             ShadowResourceIndex = Context->ShadowResourceIndex;
             ShadowFrame = Renderer->RenderWorldShadows(ShadowResourceIndex, ViewWorld, SceneRenderer);
         }
-        Renderer->RenderDirectionalShadow(Viewport, ViewWorld, SceneRenderer, DirectionalFrame);
+        Renderer->RenderDirectionalShadow(Viewport, ViewWorld, SceneRenderer, View, DirectionalFrame);
     }
     else
         Viewport.GetDirectionalShadow().ResetFrame();

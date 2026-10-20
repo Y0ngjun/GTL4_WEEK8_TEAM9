@@ -9,6 +9,14 @@ enum class ELightType : uint8
 
 inline constexpr uint32 InvalidShadowIndex = ~0u;
 
+// Directional의 CPU 준비 설정. GPU 조명 상수 레이아웃에는 포함하지 않는다.
+struct FShadowCascadeSettings
+{
+    uint32 Count = 4;
+    float MaxDistance = 100.0f;
+    float SplitLambda = 0.5f;
+};
+
 // UberLit.hlsl의 MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS
 constexpr uint32 MaxPointLights = 4;
 constexpr uint32 MaxSpotLights = 4;

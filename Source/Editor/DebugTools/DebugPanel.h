@@ -19,6 +19,7 @@ public:
 	// bPlayWorld가 true면 PIE World, 아니면 Editor World의 마지막 컬링 결과. 준비한 적 없으면 nullptr.
 	void SetShadowStatsQuery(std::function<const FShadowCullingStats*(bool bPlayWorld)> InQuery) { ShadowStatsQuery = std::move(InQuery); }
 	void SetHasPlayWorldQuery(std::function<bool()> InQuery) { HasPlayWorldQuery = std::move(InQuery); }
+	void SetDirectionalStatsQuery(std::function<const FShadowCullingStats*()> InQuery) { DirectionalStatsQuery = std::move(InQuery); }
 
 private:
 	void DrawShadowWorldSelector(bool bHasPlayWorld);
@@ -29,6 +30,7 @@ private:
 	FShadowCullingSettings* ShadowSettings = nullptr;
 	std::function<const FShadowCullingStats*(bool)> ShadowStatsQuery;
 	std::function<bool()> HasPlayWorldQuery;
+	std::function<const FShadowCullingStats*()> DirectionalStatsQuery;
 	// 통계를 볼 World. PIE가 없으면 Editor로 돌아간다.
 	bool bShowPlayWorldStats = false;
 };

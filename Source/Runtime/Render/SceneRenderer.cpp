@@ -467,7 +467,7 @@ void FSceneRenderer::BuildShadowCasterQueue(UWorld& World, FShadowDepthPassInfo&
                                             ++Stats.CastersCulledBySize;
                                             return;
                                         }
-                                        if (ShadowCullingSettings.bCullCastersByView && !IsCasterShadowVisible(Bounds, Context, PreparingShadowViews))
+                                        if (!Stats.bCaching && ShadowCullingSettings.bCullCastersByView && !IsCasterShadowVisible(Bounds, Context, PreparingShadowViews))
                                         {
                                             ++Stats.CastersCulledByView;
                                             return;
@@ -665,15 +665,143 @@ bool BuildDirectionalSetup(UWorld& World, const FDirectionalLightSceneProxy& Lig
 }
 }
 
-void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes)
+void FSceneRenderer::BuildCascadeSplits(const FSceneView& View, const FShadowCascadeSettings& Settings, TArray<FShadowCascadeSplit>& OutSplits)
+{
+    OutSplits.Reset();
+    if (Settings.Count == 0) return;
+    const FMatrix& Projection = View.ProjectionMatrix;
+    const float Near = -Projection.M[3][2] / Projection.M[0][2];
+    const float ProjectionFar = (Projection.M[3][3] - Projection.M[3][2]) / (Projection.M[0][2] - Projection.M[0][3]);
+    const float Far = std::min(ProjectionFar, Settings.MaxDistance);
+    if (Far <= Near) return;
+    const float Lambda = std::clamp(Settings.SplitLambda, 0.0f, 1.0f);
+    float PreviousDepth = Near;
+    for (uint32 Index = 0; Index < Settings.Count; ++Index)
+    {
+        const float Fraction = static_cast<float>(Index + 1) / Settings.Count;
+        const float UniformDepth = Near + (Far - Near) * Fraction;
+        const float LogDepth = Near * std::pow(Far / Near, Fraction);
+        FShadowCascadeSplit Split;
+        Split.NearDepth = PreviousDepth;
+
+        // todo: 아직 blend band는 구현하지 않았다
+        // todo: 현재는 가중평균으로 계산하지만, 추후 UE 방식의 PSSM으로 적용할 예정
+        Split.FarDepth = Index + 1 == Settings.Count ? Far : UniformDepth + Lambda * (LogDepth - UniformDepth);
+        PreviousDepth = Split.FarDepth;
+        OutSplits.Add(std::move(Split));
+    }
+}
+
+void FSceneRenderer::BuildCascadeProjections(const FSceneView& View, const FVector& LightDirection, uint32 Resolution, TArray<FShadowCascadeSplit>& Splits)
+{
+    const FVector Forward = LightDirection.GetSafeNormal();
+    if (Resolution == 0 || Forward.SizeSquared() == 0.0f)
+    {
+        Splits.Reset();
+        return;
+    }
+    const FVector UpGuide = std::abs(Forward.Z) > 0.99f ? FVector(0, 1, 0) : FVector(0, 0, 1);
+    const FVector Right = FVector::Cross(UpGuide, Forward).GetSafeNormal();
+    const FVector Up = FVector::Cross(Forward, Right);
+    FMatrix Rotation = FMatrix::Identity;
+    Rotation.SetAxis(0, Forward);
+    Rotation.SetAxis(1, Right);
+    Rotation.SetAxis(2, Up);
+    const float InvScaleX = 1.0f / View.ProjectionMatrix.M[1][0];
+    const float InvScaleY = 1.0f / View.ProjectionMatrix.M[2][1];
+    const float DiagonalScaleSquared = InvScaleX * InvScaleX + InvScaleY * InvScaleY;
+    for (FShadowCascadeSplit& Split : Splits)
+    {
+        // 카메라 공간에서 계산하여 같은 투영·분할의 반지름이 카메라 이동·회전에 의존하지 않게 한다.
+        const float NearScale = View.IsOrthographic() ? 1.0f : Split.NearDepth;
+        const float FarScale = View.IsOrthographic() ? 1.0f : Split.FarDepth;
+        const float NearDiagonalSquared = NearScale * NearScale * DiagonalScaleSquared;
+        const float FarDiagonalSquared = FarScale * FarScale * DiagonalScaleSquared;
+        const float Length = Split.FarDepth - Split.NearDepth;
+        const float CenterDepth = std::clamp((Split.NearDepth + Split.FarDepth) * 0.5f + (FarDiagonalSquared - NearDiagonalSquared) / (2.0f * Length), Split.NearDepth, Split.FarDepth);
+        const float NearOffset = CenterDepth - Split.NearDepth;
+        const float FarOffset = Split.FarDepth - CenterDepth;
+        const float Radius = std::sqrt(std::max(NearOffset * NearOffset + NearDiagonalSquared, FarOffset * FarOffset + FarDiagonalSquared));
+        Split.SphereCenter = View.RenderLocation + View.CameraForward * CenterDepth;
+        Split.SphereRadius = Radius;
+
+        // Texel Snapping - 경계를 텍셀 격자에 맞추어서 shimmering 현상을 해결한다.
+        const float HalfExtent = Resolution > 1 ? Radius * (static_cast<float>(Resolution) / (Resolution - 1)) : Radius;
+        const float TexelSize = 2.0f * HalfExtent / Resolution;
+        float CenterRight = Split.SphereCenter.Dot(Right);
+        float CenterUp = Split.SphereCenter.Dot(Up);
+        if (Resolution > 1)
+        {
+            CenterRight = std::round(CenterRight / TexelSize) * TexelSize;
+            CenterUp = std::round(CenterUp / TexelSize) * TexelSize;
+        }
+        const FVector Eye = Forward * (Split.SphereCenter.Dot(Forward) - 2.0f * Radius) + Right * CenterRight + Up * CenterUp;
+        const FMatrix LightView = FMatrix::MakeTranslation(-Eye) * Rotation.GetTransposed();
+
+        FCameraProjection Projection;
+        Projection.Mode = EProjectionMode::Orthographic;
+        Projection.OrthoWidth = 2.0f * HalfExtent;
+        Projection.NearClip = Radius;
+        Projection.FarClip = 3.0f * Radius;
+        Split.DepthPass.ViewProjection = LightView * Projection.GetMatrix(1.0f);
+    }
+}
+
+void FSceneRenderer::BuildCascadeCasterQueues(UWorld& World, uint32 RequestIndex, TArray<FShadowCascadeSplit>& Splits, uint32 Resolution, FShadowCullingStats& Stats)
+{
+    const FBox* Bounds = World.GetScene().BVH.GetRootBounds();
+    for (uint32 Index = 0; Index < static_cast<uint32>(Splits.Num()); ++Index)
+    {
+        FShadowDepthPassInfo& Pass = Splits[Index].DepthPass;
+        Pass.RequestIndex = RequestIndex;
+        Pass.ArraySlice = Index;
+        Pass.Frustum = ExtractFrustumPlanes(Pass.ViewProjection);
+        if (Bounds)
+        {
+            // ExtractFrustumPlanes의 4번은 near다. 안쪽 법선이므로 Distance를 늘리면 빛 쪽으로 확장된다.
+            FPlane& Near = Pass.Frustum.Planes[4];
+            const FVector Center = (Bounds->Min + Bounds->Max) * 0.5f;
+            const FVector Extent = (Bounds->Max - Bounds->Min) * 0.5f;
+            const float SceneNearDistance = Near.Normal.GetAbs().Dot(Extent) - Near.Normal.Dot(Center);
+            Near.Distance = std::max(Near.Distance, SceneNearDistance);
+        }
+        FShadowCasterCullContext Context;
+        Context.LightType = ELightType::Directional;
+        Context.LightDirection = Pass.Frustum.Planes[4].Normal.GetSafeNormal();
+        const float Radius = Splits[Index].SphereRadius;
+        const float HalfExtent = Resolution > 1 ? Radius * (static_cast<float>(Resolution) / (Resolution - 1)) : Radius;
+        Context.TexelsPerUnit = static_cast<float>(Resolution) / (2.0f * HalfExtent);
+        if (Bounds)
+        {
+            Context.SceneMin = Bounds->Min;
+            Context.SceneMax = Bounds->Max;
+            // near 앞 caster도 receiver까지 그림자를 늘릴 수 있도록 장면 전체 길이를 사용한다.
+            Context.ExtrudeDistance = (Bounds->Max - Bounds->Min).Size();
+        }
+        BuildShadowCasterQueue(World, Pass, Context, Stats);
+        ++Stats.ShadowPassesDrawn;
+    }
+}
+
+void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes, const FSceneView* View)
 {
     OutData.ResetFrame();
     OutData.CullingStats = {};
     if (!bFrameActive) return;
 
     PreparingShadowViews.Reset();
-    for (const FRegisteredShadowView& Registered : RegisteredShadowViews)
-        if (Registered.World == &World) PreparingShadowViews.Add(Registered.View);
+    if (View)
+    {
+        FShadowCullingView CullingView;
+        CullingView.Frustum = View->Frustum;
+        CullingView.Location = View->GetCameraLocation();
+        CullingView.bOrthographic = View->IsOrthographic();
+        CullingView.PixelsPerUnit = 0.5f * View->ViewRect.Height * View->ProjectionMatrix.M[2][1];
+        PreparingShadowViews.Add(CullingView);
+    }
+    else
+        for (const FRegisteredShadowView& Registered : RegisteredShadowViews)
+            if (Registered.World == &World) PreparingShadowViews.Add(Registered.View);
 
     BuildShadowRequests(World.GetScene(), OutData, LightTypes);
     FShadowCullingStats& Stats = OutData.CullingStats;
@@ -681,6 +809,19 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
     {
         FShadowRequestPerLight& Request = OutData.ShadowRequestsPerLight[Index];
         const FLightSceneProxy* Light = Request.Light;
+        if (Light->GetLightType() == ELightType::Directional && static_cast<const FDirectionalLightSceneProxy*>(Light)->UsesCSM())
+        {
+            if (View)
+            {
+                const auto* Directional = static_cast<const FDirectionalLightSceneProxy*>(Light);
+                BuildCascadeSplits(*View, Directional->GetCascadeSettings(), OutData.CascadeSplits);
+                BuildCascadeProjections(*View, Directional->GetInfo().Direction, OutData.Resolution, OutData.CascadeSplits);
+                BuildCascadeCasterQueues(World, Index, OutData.CascadeSplits, OutData.Resolution, Stats);
+                OutData.Required2DSlices = static_cast<uint32>(OutData.CascadeSplits.Num());
+                if (!OutData.CascadeSplits.IsEmpty()) ++Stats.LightsRendered;
+            }
+            continue;
+        }
         FLightShadowSetup Setup;
         bool bValidSetup = false;
         switch (Light->GetLightType())

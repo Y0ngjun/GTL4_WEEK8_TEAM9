@@ -31,7 +31,7 @@ struct FShadowDepthPassInfo
     uint32 RequestIndex = ~0u;
 
     // Pass 1에서 선택할 DSV의 물리 slice 번호.
-    // Directional/Spot: ArraySlice = ShadowMapIndex. 
+    // Standard Directional/Spot: ArraySlice = ShadowMapIndex. Cascade: Cascade 번호.
     // Point: ArraySlice = ShadowMapIndex * 6 + 면 번호.
     uint32 ArraySlice = 0;
 
@@ -43,6 +43,18 @@ struct FShadowDepthPassInfo
 
     // 해당 면의 Frustum을 통과한 Caster들의 불투명 Static Mesh Section 패킷 목록 (현재는 반투명은 처리하지 않는다)
     FRenderQueue CasterPackets;
+};
+
+struct FShadowCascadeSplit
+{
+    // RenderLocation 기준 전방 축의 선형 깊이. 현재는 겹침 없는 선택 구간과 투영 구간이 같다.
+    float NearDepth = 0.0f;
+    float FarDepth = 0.0f;
+    // subfrustum을 감싸는 원래 구. Snapping은 투영의 가로·세로 중심에만 적용한다.
+    FVector SphereCenter;
+    float SphereRadius = 0.0f;
+    // ViewProjection은 구 범위, Frustum은 caster 수집용 범위다.
+    FShadowDepthPassInfo DepthPass;
 };
 
 
@@ -75,6 +87,7 @@ struct FShadowFrameData
     // 이번 프레임 Light 단위 컬링 전까지 남은 Light(visible, CastShadow, 반경 > 0)의 컴포넌트 UUID.
     // 여기 없는 Light의 캐시와 슬롯은 반납한다. View 등으로 컬링된 Light는 캐시를 유지한다.
     TArray<uint32> ConsideredLightIds;
+    TArray<FShadowCascadeSplit> CascadeSplits;
 
     void ResetFrame()
     {
@@ -84,5 +97,6 @@ struct FShadowFrameData
         ShadowInfos.Reset();
         ShadowDepthPassInfos.Reset();
         ShadowRequestsPerLight.Reset();
+        CascadeSplits.Reset();
     }
 };

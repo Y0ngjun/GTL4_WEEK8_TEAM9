@@ -49,6 +49,7 @@ private:
     void DrawShadowPreview(ULightComponent* Light);
     std::function<const FShadowResources*(ULightComponent*, FString&)> ShadowPreviewQuery;
     int PreviewFace = 0;
+    int PreviewCascade = 0;
     Microsoft::WRL::ComPtr<ID3D11Texture2D> PreviewTexture;
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> PreviewSRV;
     Microsoft::WRL::ComPtr<ID3D11PixelShader> PreviewShader;

@@ -1256,15 +1256,34 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
     FString PreviewSource;
     const FShadowResources* Resources = ShadowPreviewQuery ? ShadowPreviewQuery(Light, PreviewSource) : nullptr;
     if (!PreviewSource.empty()) ImGui::TextWrapped("%s", PreviewSource.c_str());
-    const FShadowPreviewEntry* Entry = nullptr;
+    TArray<const FShadowPreviewEntry*> Entries;
     if (Resources)
         for (const FShadowPreviewEntry& Candidate : Resources->PreviewEntries)
-            if (Candidate.LightId == Light->GetUUID()) { Entry = &Candidate; break; }
-    if (!Entry)
+            if (Candidate.LightId == Light->GetUUID()) Entries.Add(&Candidate);
+    if (Entries.IsEmpty())
     {
+        PreviewCascade = 0;
         ImGui::TextDisabled("No shadow map rendered for this light.");
         return;
     }
+    // 할당 용량이 아니라 이번 프레임에 렌더된 항목만 선택한다.
+    PreviewCascade = std::clamp(PreviewCascade, 0, static_cast<int>(Entries.Num()) - 1);
+    if (Entries.Num() > 1)
+    {
+        const FString SelectedLabel = std::to_string(PreviewCascade + 1);
+        if (ImGui::BeginCombo("Cascade", SelectedLabel.c_str()))
+        {
+            for (int Index = 0; Index < static_cast<int>(Entries.Num()); ++Index)
+            {
+                const FString Label = std::to_string(Index + 1);
+                const bool bSelected = Index == PreviewCascade;
+                if (ImGui::Selectable(Label.c_str(), bSelected)) PreviewCascade = Index;
+                if (bSelected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+    }
+    const FShadowPreviewEntry* Entry = Entries[PreviewCascade];
     const bool PreviewArray = Entry->bCube;
     const uint32 PreviewIndex = Entry->ShadowMapIndex;
     if (PreviewArray) ImGui::Combo("Face", &PreviewFace, "+X\0-X\0+Y\0-Y\0+Z\0-Z\0");

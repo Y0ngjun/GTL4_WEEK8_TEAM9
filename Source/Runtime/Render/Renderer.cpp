@@ -131,6 +131,12 @@ bool FRenderer::Init()
         HTR_LOG(Error, "[Renderer] required shadow distance shader is missing or invalid");
         return false;
     }
+    ShadowNearClampShader = FRenderResourceManager::FindShaderProgram("Resources/Shader/ShadowNearClampDepthShader.hlsl");
+    if (!ShadowNearClampShader || ShadowNearClampShader->ComputeShader || !ShadowNearClampShader->VertexShader || !ShadowNearClampShader->PixelShader || !ShadowNearClampShader->VertexShader->IsValid() || !ShadowNearClampShader->PixelShader->IsValid())
+    {
+        HTR_LOG(Error, "[Renderer] required shadow near clamp shader is missing or invalid");
+        return false;
+    }
     if (!TileLightCulling.Init())
     {
         HTR_LOG(Error, "[Renderer] required tile light culling initialization failed");
@@ -690,7 +696,7 @@ void FRenderer::CullLights(FTileLightCullingResources& Resources, const FMatrix&
     RenderCommand::BindShaderResource(11, bReady ? Resources.TileLightIndicesSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
 }
 
-bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height)
+bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, FShaderProgram* Shader, ID3D11DepthStencilView* DSV, uint32 Width, uint32 Height)
 {
     if (!DSV || Width == 0 || Height == 0) return false;
     if (!ShadowDepthPassCB || !ShadowDepthPassCB->GetBuffer() || !PerObjectCB || !PerObjectCB->GetBuffer()) return false;
@@ -699,7 +705,6 @@ bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FSh
 
     FShadowDepthPassConstants Constants{};
     Constants.ViewProjection = Pass.ViewProjection;
-    FShaderProgram* Shader = DepthShader;
     float Radius = 0.0f;
     switch (Light->GetLightType())
     {
@@ -710,7 +715,6 @@ bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FSh
         const FPointLightInfo& Info = static_cast<const FPointLightSceneProxy*>(Light)->GetInfo();
         Constants.LightPosition = Info.Position;
         Radius = Info.AttenuationRadius;
-        Shader = ShadowDistanceShader;
         break;
     }
     case ELightType::Spot:
@@ -718,7 +722,6 @@ bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FSh
         const FSpotLightInfo& Info = static_cast<const FSpotLightSceneProxy*>(Light)->GetInfo();
         Constants.LightPosition = Info.Position;
         Radius = Info.AttenuationRadius;
-        Shader = ShadowDistanceShader;
         break;
     }
     default:
@@ -859,7 +862,7 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
             ? Resources.DepthCube->GetFaceDSV(Request.ShadowMapIndex, Pass.ArraySlice % FTextureCubeArray::FaceCount)
             : Resources.Depth2D->GetSliceDSV(Pass.ArraySlice);
 
-        if (!DrawShadowDepth(Request, Pass, DSV, Resolution, Resolution)) return Fail();
+        if (!DrawShadowDepth(Request, Pass, ShadowDistanceShader, DSV, Resolution, Resolution)) return Fail();
     }
 
     if (!Resources.UploadShadowInfos(Frame.ShadowInfos)) return Fail();
@@ -874,24 +877,35 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
     return &Frame;
 }
 
-bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, FShadowFrameData& Frame, uint32 Resolution)
+bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 Resolution)
 {
     FShadowResources& Resources = Viewport.GetDirectionalShadow();
     Resources.ResetFrame();
     const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
     Frame.Resolution = Resolution;
-    SceneRenderer.PrepareShadows(World, Frame, {ELightType::Directional});
-    if (FrameNumber == 0 || Frame.ShadowDepthPassInfos.IsEmpty()) return false;
-    Resources.RenderedFrame = FrameNumber;
+    SceneRenderer.PrepareShadows(World, Frame, {ELightType::Directional}, &View);
+    Resources.CullingStats = Frame.CullingStats;
+    if (FrameNumber == 0 || Frame.ShadowRequestsPerLight.IsEmpty()) return false;
     const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[0];
-    const FShadowDepthPassInfo& Pass = Frame.ShadowDepthPassInfos[0];
+    const bool bUseCSM = static_cast<const FDirectionalLightSceneProxy*>(Request.Light)->UsesCSM();
+    const uint32 PassCount = static_cast<uint32>(bUseCSM ? Frame.CascadeSplits.Num() : Frame.ShadowDepthPassInfos.Num());
+    if (PassCount == 0) return false;
+    Resources.RenderedFrame = FrameNumber;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
-    if (!Resources.EnsureCapacity(Resolution, 1, 0)) return false;
-    if (!DrawShadowDepth(Request, Pass, Resources.Depth2D->GetSliceDSV(0), Resolution, Resolution)) return false;
+    if (!Resources.EnsureCapacity(Resolution, PassCount, 0)) return false;
+    FShaderProgram* Shader = bUseCSM ? ShadowNearClampShader : DepthShader;
+    for (uint32 Index = 0; Index < PassCount; ++Index)
+    {
+        const FShadowDepthPassInfo& Pass = bUseCSM ? Frame.CascadeSplits[Index].DepthPass : Frame.ShadowDepthPassInfos[Index];
+        if (!DrawShadowDepth(Request, Pass, Shader, Resources.Depth2D->GetSliceDSV(Pass.ArraySlice), Resolution, Resolution)) return false;
+    }
     Resources.bDepthReady = true;
-    Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), 0, false});
-    Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
+    for (uint32 Index = 0; Index < PassCount; ++Index)
+        Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), Index, false});
+    // todo: Cascade 선택 및 조회는 아직 구현되지 않았다.
+	// CSM 깊이를 Standard 한 장으로 바인딩하지 않는다.
+    if (!bUseCSM) Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
     return true;
 }
 

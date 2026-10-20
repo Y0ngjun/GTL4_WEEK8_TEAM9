@@ -124,6 +124,22 @@ void FDebugPanel::OnRender()
 	DrawShadowCacheSection(Stats);
 	DrawLightCullingSection(Stats);
 	DrawCasterCullingSection(Stats);
+	if (ImGui::CollapsingHeader("Directional / CSM (Selected Viewport)", ImGuiTreeNodeFlags_DefaultOpen))
+	{
+		const FShadowCullingStats* Directional = DirectionalStatsQuery ? DirectionalStatsQuery() : nullptr;
+		if (Directional && BeginStatTable("##DirectionalShadowStats"))
+		{
+			StatRow("Lights prepared", Directional->LightsRendered);
+			StatRow("Depth passes", Directional->ShadowPassesDrawn, "One pass per cascade in CSM. No cached passes.");
+			StatRow("Casters considered", Directional->CastersConsidered, "Counted separately for each cascade.");
+			StatRow("Shadow outside view", Directional->CastersCulledByView);
+			StatRow("Smaller than min size", Directional->CastersCulledBySize);
+			StatRow("Casters drawn", Directional->CastersDrawn);
+			ImGui::EndTable();
+		}
+		else if (!Directional)
+			ImGui::TextDisabled("Select a visible editor viewport with directional shadows.");
+	}
 
 	ImGui::Spacing();
 	ImGui::Separator();
@@ -227,14 +243,11 @@ void FDebugPanel::DrawCasterCullingSection(const FShadowCullingStats* Stats)
 	if (BeginControlTable("##CasterCullingControls"))
 	{
 		ControlRow("Cull By View", "Skip casters whose shadow volume (bounds extruded away from the light) misses every view.");
-		// 캐싱 중에는 SceneRenderer가 이 옵션을 무시하므로 비활성으로 보여 준다.
-		ImGui::BeginDisabled(bCaching);
 		ImGui::Checkbox("##CullCastersByView", &ShadowSettings->bCullCastersByView);
-		ImGui::EndDisabled();
 		if (bCaching)
 		{
 			ImGui::SameLine();
-			ImGui::TextDisabled("off while caching");
+			ImGui::TextDisabled("World cache: off; Directional: active");
 		}
 		ControlRow("Min Size", "Skip casters whose bounding diameter in the shadow map is smaller than this. 0 = off.");
 		OptionalFloat("##MinCasterTexels", ShadowSettings->MinCasterTexels, 0.05f, 64.0f, "%.2f texels");
