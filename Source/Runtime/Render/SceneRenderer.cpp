@@ -127,7 +127,23 @@ bool IsCasterShadowVisible(const FAABB& Bounds, const FShadowCasterCullContext& 
     }
     if (Context.LightType == ELightType::Directional)
     {
-        const FVector Offset = Context.LightDirection * Context.ExtrudeDistance;
+        // 그림자는 Receiver가 있는 장면 범위 안에만 생기므로, 볼륨이 장면 바운드를 빠져나가는 곳까지만 늘린다.
+        // 축마다 "출구 평면에서 가장 먼 꼭짓점이 그 평면에 닿는 거리"를 구하고 그중 최소를 쓴다.
+        // 박스 안의 어느 점도 이 거리 안에 장면을 벗어나므로 보수적이다(화면에 닿는 그림자를 지우지 않는다).
+        const float Direction[3] = {Context.LightDirection.X, Context.LightDirection.Y, Context.LightDirection.Z};
+        const float BoxMin[3] = {Bounds.Center.X - Bounds.Extent.X, Bounds.Center.Y - Bounds.Extent.Y, Bounds.Center.Z - Bounds.Extent.Z};
+        const float BoxMax[3] = {Bounds.Center.X + Bounds.Extent.X, Bounds.Center.Y + Bounds.Extent.Y, Bounds.Center.Z + Bounds.Extent.Z};
+        const float SceneMin[3] = {Context.SceneMin.X, Context.SceneMin.Y, Context.SceneMin.Z};
+        const float SceneMax[3] = {Context.SceneMax.X, Context.SceneMax.Y, Context.SceneMax.Z};
+        float Extrude = Context.ExtrudeDistance;
+        for (uint32 Axis = 0; Axis < 3; ++Axis)
+        {
+            if (std::abs(Direction[Axis]) < 1.0e-4f) continue;
+            const float ExitPlane = Direction[Axis] > 0.0f ? SceneMax[Axis] : SceneMin[Axis];
+            const float FarthestCorner = Direction[Axis] > 0.0f ? BoxMin[Axis] : BoxMax[Axis];
+            Extrude = std::min(Extrude, std::max((ExitPlane - FarthestCorner) / Direction[Axis], 0.0f));
+        }
+        const FVector Offset = Context.LightDirection * Extrude;
         for (uint32 Corner = 0; Corner < 8; ++Corner)
             Points[8 + Corner] = Points[Corner] + Offset;
     }
@@ -147,6 +163,15 @@ bool IsCasterShadowVisible(const FAABB& Bounds, const FShadowCasterCullContext& 
     for (const FShadowCullingView& View : Views)
         if (!ArePointsOutsideFrustum(Points, 16, View.Frustum)) return true;
     return false;
+}
+
+// 점에서 박스까지 가장 가까운 거리의 제곱. 점이 박스 안이면 0이다.
+float DistanceSquaredToBox(const FVector& Point, const FAABB& Bounds)
+{
+    const float DX = std::max(std::abs(Point.X - Bounds.Center.X) - Bounds.Extent.X, 0.0f);
+    const float DY = std::max(std::abs(Point.Y - Bounds.Center.Y) - Bounds.Extent.Y, 0.0f);
+    const float DZ = std::max(std::abs(Point.Z - Bounds.Center.Z) - Bounds.Extent.Z, 0.0f);
+    return DX * DX + DY * DY + DZ * DZ;
 }
 
 // Caster 바운딩 구의 쉐도우 맵 상 지름(텍셀).
@@ -429,8 +454,13 @@ void FSceneRenderer::BuildShadowCasterQueue(UWorld& World, FShadowDepthPassInfo&
                                         UStaticMeshComponent* Component = Cast<UStaticMeshComponent>(Proxy->GetComponent());
                                         if (!Component || !Component->GetOwner() || Component->GetOwner()->GetWorld() != &World) return;
                                         if (World.IsPlayInEditor() && Component->IsHiddenInGame()) return;
-                                        ++Stats.CastersConsidered;
                                         const FAABB& Bounds = Proxy->GetBounds();
+                                        // 프러스텀 판정은 평면마다 따로 하므로, 바닥처럼 넓은 박스는 실제로 겹치지 않아도 통과할 수 있다.
+                                        // Point/Spot은 영향 구와 박스 거리로 한 번 더 걸러 라이트 프러스텀 컬링의 일부로 처리한다.
+                                        if (Context.LightType != ELightType::Directional &&
+                                            DistanceSquaredToBox(Context.LightPosition, Bounds) > Context.ExtrudeDistance * Context.ExtrudeDistance)
+                                            return;
+                                        ++Stats.CastersConsidered;
                                         if (ShadowCullingSettings.MinCasterTexels > 0.0f && ComputeCasterTexels(Bounds, Context) < ShadowCullingSettings.MinCasterTexels)
                                         {
                                             ++Stats.CastersCulledBySize;
@@ -613,6 +643,8 @@ bool BuildDirectionalSetup(UWorld& World, const FDirectionalLightSceneProxy& Lig
     Out.Context.LightDirection = Forward;
     // 장면 구 안의 Caster가 드리우는 그림자는 깊이 범위(Far - Near = 2r)를 넘지 않는다.
     Out.Context.ExtrudeDistance = Projection.FarClip - Projection.NearClip;
+    Out.Context.SceneMin = Bounds->Min;
+    Out.Context.SceneMax = Bounds->Max;
     Out.Context.TexelsPerUnit = static_cast<float>(Resolution) / Projection.OrthoWidth;
 
     FShadowInfo& Info = Out.Info;

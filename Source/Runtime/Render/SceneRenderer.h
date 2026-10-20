@@ -18,8 +18,11 @@ struct FShadowCasterCullContext
     FVector LightPosition{};
     // Directional: 빛이 나아가는 방향.
     FVector LightDirection{};
-    // Directional: 그림자 볼륨을 늘릴 거리. Spot/Point: 감쇠 반경.
+    // Directional: 그림자 볼륨을 늘릴 최대 거리. Spot/Point: 감쇠 반경.
     float ExtrudeDistance = 0.0f;
+    // Directional: Receiver가 있을 수 있는 장면 범위. 그림자 볼륨은 이 밖으로 늘릴 필요가 없다.
+    FVector SceneMin{};
+    FVector SceneMax{};
     // Directional: 월드 길이 1의 텍셀 수. Spot/Point: 거리 1에서 월드 길이 1의 텍셀 수.
     float TexelsPerUnit = 0.0f;
 };
