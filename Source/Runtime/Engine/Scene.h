@@ -37,7 +37,7 @@ public:
 	void RemoveAllLights();
 	void MarkLightDirty(FLightSceneProxy* Proxy);
 	// Ambient·Directional은 마지막으로 등록된 것 하나, Point·Spot은 MaxPointLights·MaxSpotLights개까지 담는다.
-	void BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr) const;
+	void BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr, const TArray<FShadowRequestPerLight>* DirectionalShadowRequests = nullptr) const;
 
 	void UpdateAllTransforms();
 
