@@ -22,6 +22,7 @@ public:
 	float GetShadowSlopeBias() const { return ShadowSlopeBias; }
 	float GetShadowMaxSlope() const { return ShadowMaxSlope; }
 	float GetShadowNormalOffset() const { return ShadowNormalOffset; }
+	bool UsesPCSS() const { return bUsePCSS; }
 	bool IsVisible() const { return bVisible; }
 
 protected:
@@ -32,6 +33,7 @@ protected:
 		ShadowSlopeBias = Light->GetShadowSlopeBias();
 		ShadowMaxSlope = Light->GetShadowMaxSlope();
 		ShadowNormalOffset = Light->GetShadowNormalOffset();
+		bUsePCSS = Light->UsesPCSS();
 	}
 
 	// 초기값을 false로 설정하여, Ambient에서 그림자를 생성하지 않도록 만든다.
@@ -40,6 +42,7 @@ protected:
 	float ShadowSlopeBias = 0.0f;
 	float ShadowMaxSlope = 0.0f;
 	float ShadowNormalOffset = 0.0f;
+	bool bUsePCSS = false;
 	ULightComponentBase* Component = nullptr;
 	bool bVisible = true;
 

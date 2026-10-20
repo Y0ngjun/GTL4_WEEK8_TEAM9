@@ -11,6 +11,7 @@ class ULightComponent : public ULightComponentBase
 		PROPERTY(ShadowSlopeBias)
 		PROPERTY(ShadowMaxSlope)
 		PROPERTY(ShadowNormalOffset)
+		PROPERTY(bUsePCSS)
 	REFLECT_END()
 
 public:
@@ -33,6 +34,8 @@ public:
 	void SetShadowMaxSlope(float Value) { ShadowMaxSlope = Value; MarkSceneProxyDirty(); }
 	float GetShadowNormalOffset() const { return ShadowNormalOffset; }
 	void SetShadowNormalOffset(float Value) { ShadowNormalOffset = Value; MarkSceneProxyDirty(); }
+	bool UsesPCSS() const { return bUsePCSS; }
+	void SetUsePCSS(bool bValue) { bUsePCSS = bValue; MarkSceneProxyDirty(); }
 
 protected:
 	bool bCastShadow = true;
@@ -46,4 +49,7 @@ protected:
 	// 무차원 k: 조회 위치를 법선 방향으로 k * (T/2) * sin(theta)만큼 띄운다. k = 1이 이론상 최소값이다.
 	// 0이면 끈다. Slope Bias와 함께 켜면 두 보정이 더해진다.
 	float ShadowNormalOffset = 0.0f;
+	// 켜면 PCSS(차폐물 거리에 따라 반영 폭이 바뀌는 그림자), 끄면 기본 조회(Directional: 2x2 PCF, Spot/Point: 단일 비교)를 쓴다.
+	// 반영 폭은 Directional의 LightSourceAngle, Spot/Point의 SourceRadius로 정한다.
+	bool bUsePCSS = true;
 };

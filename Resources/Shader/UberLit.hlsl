@@ -167,7 +167,8 @@ struct FShadowInfo
     float PenumbraScale;  // PCSS 반영 폭 계수. 결과는 Map 한 장 기준 로컬 UV (C++ FShadowInfo 주석 참고)
     float4 AtlasUVScaleBias;
     float PCSSNearDepth;  // Spot/Point 차폐물 탐색용 정규화 Near 깊이
-    float3 PCSSPadding;
+    uint bUsePCSS;        // Light의 bUsePCSS. 1이면 PCSS, 0이면 기본 조회
+    float2 PCSSPadding;
 };
 cbuffer DirectionalShadowConstants : register(b5)
 {
@@ -271,7 +272,8 @@ float GetShadowMapTexelUV(FShadowInfo Info)
 // 모든 오프셋은 Map 한 장 기준 로컬 UV이고, 아틀라스 조회는 위의 두 함수가 타일 안으로 제한한다.
 // ---------------------------------------------------------------------------------
 
-// 1이면 PCSS, 0이면 기본 조회(Directional: 2x2 PCF, Spot/Point: 단일 비교)를 쓴다.
+// PCSS 코드를 셰이더에 넣을지 정하는 컴파일 스위치. 1이면 Light마다 bUsePCSS로 실행 중에 켜고 끈다.
+// 0이면 PCSS 코드가 빠지고 항상 기본 조회(Directional: 2x2 PCF, Spot/Point: 단일 비교)를 쓴다.
 #ifndef DIRECTIONAL_SHADOW_PCSS
 #define DIRECTIONAL_SHADOW_PCSS 1
 #endif
@@ -406,12 +408,23 @@ float SampleDirectionalShadowPCSS(uint InfoIndex, float3 WorldPosition, float3 G
     return FilterShadowPCSS(Info, UV, Ndc.z, CompareDepth, GetPCSSRotation(WorldPosition), false);
 }
 
+// Light의 bUsePCSS로 실행 중에 고른다. DIRECTIONAL_SHADOW_PCSS가 0이면 PCSS 코드 자체를 빼서 항상 기본 조회를 쓴다.
 float SampleDirectionalShadowFiltered(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
 {
 #if DIRECTIONAL_SHADOW_PCSS
-    return SampleDirectionalShadowPCSS(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
-#else
+    [branch] if (DirectionalShadowInfos[InfoIndex].bUsePCSS != 0u)
+        return SampleDirectionalShadowPCSS(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+#endif
     return SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+}
+
+// Spot/Point용. 유효한 번호일 때만 Light의 bUsePCSS를 읽는다.
+bool LocalShadowUsesPCSS(uint ShadowIndex)
+{
+#if LOCAL_SHADOW_PCSS
+    return ShadowIndex < NumShadowInfos && ShadowInfos[ShadowIndex].bUsePCSS != 0u;
+#else
+    return false;
 #endif
 }
 
@@ -731,11 +744,10 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             float Shadow = 1.0f;
             [branch] if (dot(N, L) > 0.0f)
             {
-#if LOCAL_SHADOW_PCSS
-                Shadow = ComputePointShadowPCSS(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
-#else
-                Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
-#endif
+                [branch] if (LocalShadowUsesPCSS(Light.ShadowIndex))
+                    Shadow = ComputePointShadowPCSS(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+                else
+                    Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             }
             float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
@@ -771,11 +783,10 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             float Shadow = 1.0f;
             [branch] if (SpotAttenuation > 0.0f && dot(N, L) > 0.0f)
             {
-#if LOCAL_SHADOW_PCSS
-                Shadow = ComputeSpotShadowPCSS(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
-#else
-                Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
-#endif
+                [branch] if (LocalShadowUsesPCSS(Light.ShadowIndex))
+                    Shadow = ComputeSpotShadowPCSS(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+                else
+                    Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             }
             float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);

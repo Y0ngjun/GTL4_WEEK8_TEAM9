@@ -37,7 +37,9 @@ struct FShadowInfo
     FVector4 AtlasUVScaleBias = { 1, 1, 0, 0 };
     // Spot/Point 차폐물 탐색에서 가장 먼 차폐물 위치로 쓰는 정규화 Near 깊이.
     float PCSSNearDepth = 0.0f;
-    float PCSSPadding[3] = {};
+    // 1이면 셰이더가 PCSS로, 0이면 기본 조회로 이 Map을 읽는다. Light의 bUsePCSS를 그대로 옮긴다.
+    uint32 bUsePCSS = 0;
+    float PCSSPadding[2] = {};
 };
 static_assert(sizeof(FShadowInfo) == 144);
 static_assert(offsetof(FShadowInfo, LightPosition) == 64);
@@ -48,3 +50,4 @@ static_assert(offsetof(FShadowInfo, NormalOffset) == 104);
 static_assert(offsetof(FShadowInfo, PenumbraScale) == 108);
 static_assert(offsetof(FShadowInfo, AtlasUVScaleBias) == 112);
 static_assert(offsetof(FShadowInfo, PCSSNearDepth) == 128);
+static_assert(offsetof(FShadowInfo, bUsePCSS) == 132);
