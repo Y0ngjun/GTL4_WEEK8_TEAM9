@@ -29,7 +29,7 @@ FShadowCascadeSettings UDirectionalLightComponent::GetCascadeSettings() const
     FShadowCascadeSettings Settings;
     Settings.Count = static_cast<uint32>(FMath::Clamp(CascadeCount, 1, static_cast<int32>(MaxShadowCascades)));
     Settings.MaxDistance = std::isfinite(CascadeMaxDistance) ? std::max(0.0f, CascadeMaxDistance) : 100.0f;
-    Settings.SplitLambda = std::isfinite(CascadeSplitLambda) ? FMath::Clamp(CascadeSplitLambda, 0.0f, 1.0f) : 0.5f;
+    Settings.DistributionExponent = std::isfinite(CascadeDistributionExponent) ? FMath::Clamp(CascadeDistributionExponent, 1.0f, 10.0f) : 3.0f;
     Settings.BlendRatio = std::isfinite(CascadeBlendRatio) ? FMath::Clamp(CascadeBlendRatio, 0.0f, 0.5f) : 0.1f;
     return Settings;
 }
@@ -39,7 +39,7 @@ void UDirectionalLightComponent::PostEditChangeProperty(const FProperty& Propert
     const FShadowCascadeSettings Settings = GetCascadeSettings();
     CascadeCount = static_cast<int32>(Settings.Count);
     CascadeMaxDistance = Settings.MaxDistance;
-    CascadeSplitLambda = Settings.SplitLambda;
+    CascadeDistributionExponent = Settings.DistributionExponent;
     CascadeBlendRatio = Settings.BlendRatio;
     Super::PostEditChangeProperty(Property);
 }

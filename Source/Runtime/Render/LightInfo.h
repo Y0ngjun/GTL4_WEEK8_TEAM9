@@ -16,7 +16,8 @@ struct FShadowCascadeSettings
 {
     uint32 Count = 4;
     float MaxDistance = 100.0f;
-    float SplitLambda = 0.5f;
+    // 인접한 Cascade 구간 길이의 비율. 1은 균등 분할.
+    float DistributionExponent = 3.0f;
     // 원래 선택 구간 길이 대비 끝부분의 혼합 폭. 0은 혼합 없음.
     float BlendRatio = 0.1f;
 };

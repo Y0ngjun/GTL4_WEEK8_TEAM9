@@ -674,14 +674,23 @@ void FSceneRenderer::BuildCascadeSplits(const FSceneView& View, const FShadowCas
     const float ProjectionFar = (Projection.M[3][3] - Projection.M[3][2]) / (Projection.M[0][2] - Projection.M[0][3]);
     const float Far = std::min(ProjectionFar, Settings.MaxDistance);
     if (Far <= Near) return;
-    const float Lambda = std::clamp(Settings.SplitLambda, 0.0f, 1.0f);
+    const double Exponent = std::clamp(Settings.DistributionExponent, 1.0f, 10.0f);
+    // 구간 길이를 1, e, e^2, ... 비율로 배분한다. e=1도 같은 합산으로 균등 분할된다.
+    double TotalWeight = 0.0;
+    double Weight = 1.0;
+    for (uint32 Index = 0; Index < Settings.Count; ++Index)
+    {
+        TotalWeight += Weight;
+        Weight *= Exponent;
+    }
+    double CumulativeWeight = 0.0;
+    Weight = 1.0;
     const float BlendRatio = std::clamp(Settings.BlendRatio, 0.0f, 0.5f);
     float PreviousDepth = Near;
     for (uint32 Index = 0; Index < Settings.Count; ++Index)
     {
-        const float Fraction = static_cast<float>(Index + 1) / Settings.Count;
-        const float UniformDepth = Near + (Far - Near) * Fraction;
-        const float LogDepth = Near * std::pow(Far / Near, Fraction);
+        CumulativeWeight += Weight;
+        Weight *= Exponent;
         FShadowCascadeSplit Split;
         Split.NearDepth = PreviousDepth;
         Split.ProjectionNearDepth = Split.NearDepth;
@@ -691,8 +700,7 @@ void FSceneRenderer::BuildCascadeSplits(const FSceneView& View, const FShadowCas
             Split.ProjectionNearDepth -= BlendRatio * (Previous.FarDepth - Previous.NearDepth);
         }
 
-        // todo: 현재는 가중평균으로 계산하지만, 추후 UE 방식의 PSSM으로 적용할 예정
-        Split.FarDepth = Index + 1 == Settings.Count ? Far : UniformDepth + Lambda * (LogDepth - UniformDepth);
+        Split.FarDepth = Index + 1 == Settings.Count ? Far : static_cast<float>(Near + (Far - Near) * (CumulativeWeight / TotalWeight));
         PreviousDepth = Split.FarDepth;
         OutSplits.Add(std::move(Split));
     }
