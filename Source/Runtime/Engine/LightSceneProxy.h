@@ -18,6 +18,7 @@ public:
 	ELightType GetLightType() const { return Type; }
 	FScene* GetScene() const { return Scene; }
 	bool CastsShadow() const { return bCastShadow; }
+	uint32 GetShadowMapResolution() const { return ShadowMapResolution; }
 	float GetShadowBias() const { return ShadowBias; }
 	float GetShadowSlopeBias() const { return ShadowSlopeBias; }
 	float GetShadowMaxSlope() const { return ShadowMaxSlope; }
@@ -29,6 +30,7 @@ protected:
 	void UpdateShadowSettings(const ULightComponent* Light)
 	{
 		bCastShadow = Light->CastsShadow();
+		ShadowMapResolution = Light->GetShadowMapResolution();
 		ShadowBias = Light->GetShadowBias();
 		ShadowSlopeBias = Light->GetShadowSlopeBias();
 		ShadowMaxSlope = Light->GetShadowMaxSlope();
@@ -38,6 +40,7 @@ protected:
 
 	// 초기값을 false로 설정하여, Ambient에서 그림자를 생성하지 않도록 만든다.
 	bool bCastShadow = false;
+	uint32 ShadowMapResolution = 1024;
 	float ShadowBias = 0.0f;
 	float ShadowSlopeBias = 0.0f;
 	float ShadowMaxSlope = 0.0f;

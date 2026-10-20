@@ -97,7 +97,7 @@ public:
 	void ReleaseShadowResources(uint32 Index);
 	const FShadowResources* GetShadowResources(uint32 Index) const;
 	const FShadowFrameData* RenderWorldShadows(uint32 Index, UWorld& World, FSceneRenderer& SceneRenderer);
-	bool RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex, uint32 Resolution = DefaultShadowResolution);
+	bool RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex);
 
 	// 매 View 호출한다. 비지원/실패 시 입력을 비워 이전 World의 바인딩을 남기지 않는다.
 	bool BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupported);

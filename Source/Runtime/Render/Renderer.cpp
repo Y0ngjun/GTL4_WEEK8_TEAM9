@@ -897,14 +897,13 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
     return &Frame;
 }
 
-bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex, uint32 Resolution)
+bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex)
 {
     FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     Resources.ResetFrame();
     Frame.ResetFrame();
     if (ResourceIndex >= MaxShadowResourceSlots || !WorldShadowResources[ResourceIndex]) return false;
     const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
-    Frame.Resolution = Resolution;
     SceneRenderer.PrepareShadows(World, Frame, {ELightType::Directional}, &View);
     Resources.CullingStats = Frame.CullingStats;
     if (FrameNumber == 0 || Frame.ShadowRequestsPerLight.IsEmpty()) return false;

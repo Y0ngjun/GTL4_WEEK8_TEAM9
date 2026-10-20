@@ -809,12 +809,14 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
     {
         FShadowRequestPerLight& Request = OutData.ShadowRequestsPerLight[Index];
         const FLightSceneProxy* Light = Request.Light;
+        const uint32 Resolution = Light->GetShadowMapResolution();
+        OutData.Resolution = Resolution;
         if (Light->GetLightType() == ELightType::Directional && static_cast<const FDirectionalLightSceneProxy*>(Light)->UsesCSM())
         {
             if (View)
             {
                 const auto* Directional = static_cast<const FDirectionalLightSceneProxy*>(Light);
-                PrepareDirectionalShadowCSM(World, OutData, View, Index, Directional, OutData.Resolution);
+                PrepareDirectionalShadowCSM(World, OutData, View, Index, Directional, Resolution);
             }
             continue;
         }
@@ -823,13 +825,13 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
         switch (Light->GetLightType())
         {
         case ELightType::Directional:
-            bValidSetup = BuildDirectionalSetup(World, *static_cast<const FDirectionalLightSceneProxy*>(Light), OutData.Resolution, Setup);
+            bValidSetup = BuildDirectionalSetup(World, *static_cast<const FDirectionalLightSceneProxy*>(Light), Resolution, Setup);
             break;
         case ELightType::Spot:
-            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), OutData.Resolution, Setup);
+            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), Resolution, Setup);
             break;
         case ELightType::Point:
-            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), OutData.Resolution, Setup);
+            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), Resolution, Setup);
             break;
         default:
             break;
@@ -946,10 +948,10 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
         switch (Light->GetLightType())
         {
         case ELightType::Spot:
-            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), DefaultSpotShadowResolution, Setup);
+            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), Light->GetShadowMapResolution(), Setup);
             break;
         case ELightType::Point:
-            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), DefaultPointShadowResolution, Setup);
+            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), Light->GetShadowMapResolution(), Setup);
             break;
         default:
             break;
@@ -987,6 +989,15 @@ bool FSceneRenderer::PrepareLightShadow(UWorld& World, uint32 RequestIndex, FWor
             Entry.Frusta[Face] = Setup.Frusta[Face];
             Entry.bFaceValid[Face] = false;
         }
+    }
+
+    // 해상도 변경 시 이전 영역을 먼저 반환해야 공간이 꽉 찬 상태에서도 축소할 수 있다.
+    if (!Entry.AtlasRects.IsEmpty() &&
+        (Entry.AtlasRects.Num() != Setup.PassCount || Entry.AtlasRects[0].Size != Setup.Resolution))
+    {
+        for (const FShadowAtlasRect& Rect : Entry.AtlasRects)
+            Slot.AtlasAllocator.Free(Rect.NodeIndex);
+        Entry.AtlasRects.Reset();
     }
 
     FShadowDepthPassInfo Passes[MaxShadowPassesPerLight];

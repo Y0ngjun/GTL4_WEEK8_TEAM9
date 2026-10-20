@@ -717,8 +717,25 @@ namespace
 			bChanged = ImGui::DragFloat(Label.c_str(), static_cast<float*>(ValuePtr), 0.1f);
 			break;
 		case EPropertyType::Int:
-			bChanged = ImGui::DragInt(Label.c_str(), static_cast<int*>(ValuePtr), 1.0f);
+		{
+			ULightComponent* Light = Property.Name == "ShadowMapResolution" ? Cast<ULightComponent>(Object) : nullptr;
+			if (Light)
+			{
+				constexpr int Resolutions[] = { 256, 512, 1024, 2048 };
+				const char* Items[] = { "256", "512", "1024", "2048" };
+				int Selected = 0;
+				for (int Index = 0; Index < IM_ARRAYSIZE(Resolutions); ++Index)
+					if (Resolutions[Index] == static_cast<int>(Light->GetShadowMapResolution())) Selected = Index;
+				if (ImGui::Combo(Label.c_str(), &Selected, Items, IM_ARRAYSIZE(Items)))
+				{
+					*static_cast<int*>(ValuePtr) = Resolutions[Selected];
+					bChanged = true;
+				}
+			}
+			else
+				bChanged = ImGui::DragInt(Label.c_str(), static_cast<int*>(ValuePtr), 1.0f);
 			break;
+		}
 		case EPropertyType::Bool:
 			bChanged = ImGui::Checkbox(Label.c_str(), static_cast<bool*>(ValuePtr));
 			break;

@@ -7,6 +7,7 @@ class ULightComponent : public ULightComponentBase
 	DECLARE_CLASS(ULightComponent, ULightComponentBase)
 	REFLECT_START(ULightComponent)
 		PROPERTY(bCastShadow)
+		PROPERTY(ShadowMapResolution)
 		PROPERTY(ShadowBias)
 		PROPERTY(ShadowSlopeBias)
 		PROPERTY(ShadowMaxSlope)
@@ -26,6 +27,17 @@ public:
 
 	bool CastsShadow() const { return bCastShadow; }
 	void SetCastShadow(bool bValue) { bCastShadow = bValue; MarkSceneProxyDirty(); }
+	uint32 GetShadowMapResolution() const
+	{
+		const uint32 Value = static_cast<uint32>(ShadowMapResolution);
+		return Value >= 256 && Value <= 2048 && (Value & (Value - 1)) == 0 ? Value : 1024u;
+	}
+	void SetShadowMapResolution(uint32 Value)
+	{
+		if (Value < 256 || Value > 2048 || (Value & (Value - 1)) != 0) return;
+		ShadowMapResolution = static_cast<int32>(Value);
+		MarkSceneProxyDirty();
+	}
 	float GetShadowBias() const { return ShadowBias; }
 	void SetShadowBias(float Value) { ShadowBias = Value; MarkSceneProxyDirty(); }
 	float GetShadowSlopeBias() const { return ShadowSlopeBias; }
@@ -39,6 +51,8 @@ public:
 
 protected:
 	bool bCastShadow = true;
+	// Point는 각 면, CSM은 각 Cascade에 적용한다.
+	int32 ShadowMapResolution = 1024;
 	// Bias는 월드 거리 단위다.
 	// SlopeBias는 무차원 k: Slope Bias = k * (T/2) * tan(theta), T는 쉐도우 맵 텍셀의 월드 크기. k = 1이 이론상 최소값이다.
 	// MaxSlope는 tan(theta)의 무차원 상한이다.

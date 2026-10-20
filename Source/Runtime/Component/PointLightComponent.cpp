@@ -4,6 +4,7 @@
 
 UPointLightComponent::UPointLightComponent()
 {
+    ShadowMapResolution = 256;
     // Bias는 월드 거리, SlopeBias는 텍셀 크기 배수 k(1 = 이론상 최소값)다.
     ShadowBias = 0.001f;
     ShadowSlopeBias = 1.0f;
