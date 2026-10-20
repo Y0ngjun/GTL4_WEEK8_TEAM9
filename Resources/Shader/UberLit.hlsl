@@ -151,7 +151,7 @@ StructuredBuffer<FSpotLightInfo> StructuredSpotLights : register(t9);
 Buffer<uint> TileLightCount : register(t10);
 Buffer<uint> TileLightIndices : register(t11);
 
-// CPU FShadowInfo와 동일한 128-byte StructuredBuffer 항목.
+// CPU FShadowInfo와 동일한 144-byte StructuredBuffer 항목.
 struct FShadowInfo
 {
     row_major matrix ViewProjection;
@@ -164,8 +164,10 @@ struct FShadowInfo
     float MaxSlope;
     float HalfTexelScale; // 월드 T/2. Directional: 그대로, Spot/Point: 라이트 거리를 곱한다
     float NormalOffset;   // 무차원 k. k = 1이면 (T/2) * sin(theta), 이론상 최소값
-    float Padding;
+    float PenumbraScale;  // PCSS 반영 폭 계수. 결과는 Map 한 장 기준 로컬 UV (C++ FShadowInfo 주석 참고)
     float4 AtlasUVScaleBias;
+    float PCSSNearDepth;  // Spot/Point 차폐물 탐색용 정규화 Near 깊이
+    float3 PCSSPadding;
 };
 cbuffer DirectionalShadowConstants : register(b5)
 {
@@ -242,6 +244,123 @@ float SampleShadowAtlasDepth(FShadowInfo Info, float2 LocalUV)
     return ShadowAtlas.SampleLevel(ShadowSampler, UV, 0);
 }
 
+// SampleShadowAtlasDepth와 같은 타일 제한으로 비교 샘플러(2x2 비교 + bilinear)를 쓴다.
+// 유효 Texel 중심 안쪽으로 제한하면 2x2의 바깥 텍셀 가중치가 0이 되어 옆 타일이 섞이지 않는다.
+float SampleShadowAtlasCompare(FShadowInfo Info, float2 LocalUV, float CompareDepth)
+{
+    uint Width, Height;
+    ShadowAtlas.GetDimensions(Width, Height);
+    float2 HalfTexel = 0.5f / float2(Width, Height);
+    float2 Scale = Info.AtlasUVScaleBias.xy;
+    float2 Offset = Info.AtlasUVScaleBias.zw;
+    float2 UV = clamp(LocalUV * Scale + Offset,
+        Offset + HalfTexel, Offset + Scale - HalfTexel);
+    return ShadowAtlas.SampleCmpLevelZero(ShadowComparisonSampler, UV, CompareDepth);
+}
+
+// Map 한 장(아틀라스 타일) 기준 로컬 UV에서 1텍셀의 크기.
+float GetShadowMapTexelUV(FShadowInfo Info)
+{
+    uint Width, Height;
+    ShadowAtlas.GetDimensions(Width, Height);
+    return 1.0f / max((float)Width * Info.AtlasUVScaleBias.x, 1.0f);
+}
+
+// ---------------------------------------------------------------------------------
+// PCSS 공통. 1) 차폐물 탐색 2) 반영 폭 계산 3) 그 반경으로 PCF.
+// 모든 오프셋은 Map 한 장 기준 로컬 UV이고, 아틀라스 조회는 위의 두 함수가 타일 안으로 제한한다.
+// ---------------------------------------------------------------------------------
+
+// 1이면 PCSS, 0이면 기본 조회(Directional: 2x2 PCF, Spot/Point: 단일 비교)를 쓴다.
+#ifndef DIRECTIONAL_SHADOW_PCSS
+#define DIRECTIONAL_SHADOW_PCSS 1
+#endif
+#ifndef LOCAL_SHADOW_PCSS
+#define LOCAL_SHADOW_PCSS 1
+#endif
+
+// 커널 최대 반경은 탐색 반경보다 작게 유지한다.
+#define PCSS_BLOCKER_SAMPLES   16
+#define PCSS_PCF_SAMPLES       16
+#define PCSS_MAX_SEARCH_TEXELS 12.0f
+#define PCSS_MIN_KERNEL_TEXELS 1.0f
+#define PCSS_MAX_KERNEL_TEXELS 8.0f
+
+// 반지름 1 원 안의 Poisson disk 16점 (점 사이 최소 거리 약 0.41).
+static const float2 PCSSPoissonDisk[16] =
+{
+    float2( 0.3125f, -0.1937f), float2(-0.8091f, -0.5209f),
+    float2(-0.3314f, -0.3645f), float2(-0.5950f,  0.1167f),
+    float2( 0.6196f,  0.1214f), float2(-0.3294f,  0.7294f),
+    float2( 0.2102f,  0.3908f), float2( 0.4850f, -0.8015f),
+    float2( 0.7012f,  0.5625f), float2(-0.2550f, -0.9261f),
+    float2( 0.0626f,  0.9386f), float2( 0.8832f, -0.3572f),
+    float2(-0.8313f,  0.4664f), float2(-0.1259f,  0.0427f),
+    float2( 0.0987f, -0.6498f), float2(-0.9792f, -0.0342f)
+};
+
+float2 RotatePCSSSample(float2 Sample, float2 CosSin)
+{
+    return float2(Sample.x * CosSin.x - Sample.y * CosSin.y, Sample.x * CosSin.y + Sample.y * CosSin.x);
+}
+
+// 픽셀마다 샘플 패턴을 회전시켜 줄무늬 대신 노이즈가 되게 한다. 월드 위치 기반이라 카메라가 움직여도 고정된다.
+float2 GetPCSSRotation(float3 WorldPosition)
+{
+    float Angle = 6.2831853f * frac(sin(dot(WorldPosition, float3(12.9898f, 78.233f, 37.719f))) * 43758.5453f);
+    return float2(cos(Angle), sin(Angle));
+}
+
+// Spot/Point는 광원이 유한한 거리에 있어 반영 폭 = 광원 반지름 * (dR - dB) / dB이다.
+// 깊이가 거리 / 감쇠 반경(선형)이라 정규화 깊이 그대로 비율을 구하고, 단위 환산은 PenumbraScale에 들어 있다.
+// BlockerDepth에 PCSSNearDepth를 넣으면 가장 먼 차폐물 기준의 최대 탐색 반경이 된다.
+float ComputeLocalPCSSRadius(FShadowInfo Info, float ReceiverDepth, float BlockerDepth)
+{
+    return Info.PenumbraScale * (ReceiverDepth - BlockerDepth) / (max(BlockerDepth, Info.PCSSNearDepth) * ReceiverDepth);
+}
+
+// 한 Map(타일)에서 차폐물 탐색 → 커널 반경 → PCF. bLocal은 반경 공식을 고른다.
+// Directional(false): 반경 = (zR - zB) * PenumbraScale, Spot/Point(true): ComputeLocalPCSSRadius.
+float FilterShadowPCSS(FShadowInfo Info, float2 UV, float ReceiverDepth, float CompareDepth, float2 CosSin, bool bLocal)
+{
+    float TexelUV = GetShadowMapTexelUV(Info);
+
+    // 1) 차폐물 탐색: depth 값 자체가 필요하므로 point 샘플러로 읽는다.
+    // 가장 먼 차폐물 기준 최대 반경. Directional은 near(깊이 0), Spot/Point는 PCSSNearDepth.
+    float SearchRaw = bLocal ? ComputeLocalPCSSRadius(Info, ReceiverDepth, Info.PCSSNearDepth) : ReceiverDepth * Info.PenumbraScale;
+    float SearchUV = clamp(SearchRaw, PCSS_MIN_KERNEL_TEXELS * TexelUV, PCSS_MAX_SEARCH_TEXELS * TexelUV);
+    float BlockerSum = 0.0f;
+    uint BlockerCount = 0;
+    [unroll]
+    for (uint i = 0; i < PCSS_BLOCKER_SAMPLES; ++i)
+    {
+        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[i], CosSin) * SearchUV;
+        float SampleDepth = SampleShadowAtlasDepth(Info, UV + Offset);
+        if (SampleDepth < CompareDepth)
+        {
+            BlockerSum += SampleDepth;
+            ++BlockerCount;
+        }
+    }
+    if (BlockerCount == 0) return 1.0f;
+    if (BlockerCount == PCSS_BLOCKER_SAMPLES) return 0.0f;
+    float AvgBlockerDepth = BlockerSum / (float)BlockerCount;
+
+    // 2) 반영 폭: 픽셀마다 다른 깊이 차 * 라이트(Map)마다 고정인 PenumbraScale. 텍셀 단위로 제한한다.
+    float KernelRaw = bLocal ? ComputeLocalPCSSRadius(Info, ReceiverDepth, AvgBlockerDepth) : (ReceiverDepth - AvgBlockerDepth) * Info.PenumbraScale;
+    float KernelUV = clamp(KernelRaw, PCSS_MIN_KERNEL_TEXELS * TexelUV, PCSS_MAX_KERNEL_TEXELS * TexelUV);
+
+    // 3) 가변 반경 PCF: 각 샘플은 하드웨어 2x2 비교 + bilinear.
+    float Lit = 0.0f;
+    [unroll]
+    for (uint j = 0; j < PCSS_PCF_SAMPLES; ++j)
+    {
+        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[j], CosSin) * KernelUV;
+        Lit += SampleShadowAtlasCompare(Info, UV + Offset, CompareDepth);
+    }
+    return Lit / (float)PCSS_PCF_SAMPLES;
+}
+
 uint SelectPointShadowFace(float3 Direction)
 {
     float3 AbsDirection = abs(Direction);
@@ -267,10 +386,33 @@ float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNo
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
 
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    //return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
-    return ShadowDepth2D.SampleCmpLevelZero(ShadowComparisonSampler, float3(UV, Info.ShadowMapIndex), Ndc.z - Bias);
+    return SampleShadowAtlasCompare(Info, UV, Ndc.z - Bias);
+}
+
+// Directional PCSS. 직교 투영이라 NDC.z 차이가 월드 거리에 비례하므로 그대로 쓴다. Cascade마다 PenumbraScale이 다르다.
+float SampleDirectionalShadowPCSS(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+    FShadowInfo Info = DirectionalShadowInfos[InfoIndex];
+    float3 N = normalize(GeoNormal);
+    float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
+    float HalfTexelWorld = Info.HalfTexelScale;
+    float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
+    float4 Clip = mul(float4(ShadowPosition, 1.0f), Info.ViewProjection);
+    float3 Ndc = Clip.xyz / Clip.w;
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
+    float CompareDepth = Ndc.z - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
+    return FilterShadowPCSS(Info, UV, Ndc.z, CompareDepth, GetPCSSRotation(WorldPosition), false);
+}
+
+float SampleDirectionalShadowFiltered(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+#if DIRECTIONAL_SHADOW_PCSS
+    return SampleDirectionalShadowPCSS(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+#else
+    return SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+#endif
 }
 
 float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
@@ -280,7 +422,7 @@ float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 Worl
     if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
     uint InfoIndex = SelectDirectionalShadowInfo(ShadowIndex, WorldPosition);
     if (InfoIndex == 0xffffffffu) return 1.0f;
-    float Shadow = SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+    float Shadow = SampleDirectionalShadowFiltered(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
     uint CascadeIndex = InfoIndex - ShadowIndex;
     if (bUseCSM != 0u && CascadeIndex + 1u < CascadeCount)
     {
@@ -291,7 +433,7 @@ float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 Worl
         if (BlendWidth > 0.0f && Depth >= FarDepth - BlendWidth)
         {
             float Weight = saturate((Depth - (FarDepth - BlendWidth)) / BlendWidth);
-            float NextShadow = SampleDirectionalShadow(InfoIndex + 1u, WorldPosition, GeoNormal, ToLightDirection);
+            float NextShadow = SampleDirectionalShadowFiltered(InfoIndex + 1u, WorldPosition, GeoNormal, ToLightDirection);
             // 깊이 자체가 아니라 각 행렬·bias로 비교한 그림자 판정값을 혼합한다.
             Shadow = lerp(Shadow, NextShadow, Weight);
         }
@@ -355,115 +497,7 @@ float ComputePointShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosit
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
-// ---------------------------------------------------------------------------------
-// PCSS. 1) 차폐물 탐색 2) 반영 폭 계산 3) 그 반경으로 PCF.
-// Bias와 Normal Offset은 위의 기본 조회 함수와 같은 방식으로 적용한다.
-// ---------------------------------------------------------------------------------
-
-// 1이면 PCSS, 0이면 위의 기본 조회(Directional: 2x2 PCF, Spot/Point: 단일 비교)를 쓴다.
-#ifndef DIRECTIONAL_SHADOW_PCSS
-#define DIRECTIONAL_SHADOW_PCSS 1
-#endif
-#ifndef LOCAL_SHADOW_PCSS
-#define LOCAL_SHADOW_PCSS 1
-#endif
-
-// 커널 최대 반경은 탐색 반경보다 작게 유지한다.
-#define PCSS_BLOCKER_SAMPLES   16
-#define PCSS_PCF_SAMPLES       16
-#define PCSS_MAX_SEARCH_TEXELS 12.0f
-#define PCSS_MIN_KERNEL_TEXELS 1.0f
-#define PCSS_MAX_KERNEL_TEXELS 8.0f
-
-// 반지름 1 원 안의 Poisson disk 16점 (점 사이 최소 거리 약 0.41).
-static const float2 PCSSPoissonDisk[16] =
-{
-    float2( 0.3125f, -0.1937f), float2(-0.8091f, -0.5209f),
-    float2(-0.3314f, -0.3645f), float2(-0.5950f,  0.1167f),
-    float2( 0.6196f,  0.1214f), float2(-0.3294f,  0.7294f),
-    float2( 0.2102f,  0.3908f), float2( 0.4850f, -0.8015f),
-    float2( 0.7012f,  0.5625f), float2(-0.2550f, -0.9261f),
-    float2( 0.0626f,  0.9386f), float2( 0.8832f, -0.3572f),
-    float2(-0.8313f,  0.4664f), float2(-0.1259f,  0.0427f),
-    float2( 0.0987f, -0.6498f), float2(-0.9792f, -0.0342f)
-};
-
-float2 RotatePCSSSample(float2 Sample, float2 CosSin)
-{
-    return float2(Sample.x * CosSin.x - Sample.y * CosSin.y, Sample.x * CosSin.y + Sample.y * CosSin.x);
-}
-
-// 픽셀마다 샘플 패턴을 회전시켜 줄무늬 대신 노이즈가 되게 한다. 월드 위치 기반이라 카메라가 움직여도 고정된다.
-float2 GetPCSSRotation(float3 WorldPosition)
-{
-    float Angle = 6.2831853f * frac(sin(dot(WorldPosition, float3(12.9898f, 78.233f, 37.719f))) * 43758.5453f);
-    return float2(cos(Angle), sin(Angle));
-}
-
-// Spot/Point는 광원이 유한한 거리에 있어 반영 폭 = 광원 반지름 * (dR - dB) / dB이다.
-// 깊이가 거리 / 감쇠 반경(선형)이라 정규화 깊이 그대로 비율을 구하고, 단위 환산은 PenumbraScale에 들어 있다.
-// BlockerDepth에 PCSSNearDepth를 넣으면 가장 먼 차폐물 기준의 최대 탐색 반경이 된다.
-float ComputeLocalPCSSRadius(FShadowInfo Info, float ReceiverDepth, float BlockerDepth)
-{
-    return Info.PenumbraScale * (ReceiverDepth - BlockerDepth) / (max(BlockerDepth, Info.PCSSNearDepth) * ReceiverDepth);
-}
-
-// Directional은 직교 투영이라 NDC.z 차이가 월드 거리에 비례하므로 그대로 쓴다.
-float ComputeDirectionalShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
-{
-    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
-    FShadowInfo Info = ShadowInfos[ShadowIndex];
-    float3 N = normalize(GeoNormal);
-    float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
-    float HalfTexelWorld = Info.HalfTexelScale;
-    float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
-    float4 Clip = mul(float4(ShadowPosition, 1.0f), Info.ViewProjection);
-    float3 Ndc = Clip.xyz / Clip.w;
-    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
-    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float ReceiverDepth = Ndc.z;
-    float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-
-    uint MapWidth, MapHeight, MapSlices;
-    ShadowDepth2D.GetDimensions(MapWidth, MapHeight, MapSlices);
-    float TexelUV = 1.0f / (float)MapWidth;
-    float2 CosSin = GetPCSSRotation(WorldPosition);
-
-    // 1) 차폐물 탐색: depth 값 자체가 필요하므로 point 샘플러로 읽는다.
-    // 가장 먼 차폐물은 섀도맵 near(깊이 0)에 있으므로 최대 탐색 반경은 ReceiverDepth * PenumbraScale이다.
-    float SearchUV = clamp(ReceiverDepth * Info.PenumbraScale, PCSS_MIN_KERNEL_TEXELS * TexelUV, PCSS_MAX_SEARCH_TEXELS * TexelUV);
-    float BlockerSum = 0.0f;
-    uint BlockerCount = 0;
-    [unroll]
-    for (uint i = 0; i < PCSS_BLOCKER_SAMPLES; ++i)
-    {
-        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[i], CosSin) * SearchUV;
-        float SampleDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV + Offset, Info.ShadowMapIndex), 0);
-        if (SampleDepth < CompareDepth)
-        {
-            BlockerSum += SampleDepth;
-            ++BlockerCount;
-        }
-    }
-    if (BlockerCount == 0) return 1.0f;
-    if (BlockerCount == PCSS_BLOCKER_SAMPLES) return 0.0f;
-    float AvgBlockerDepth = BlockerSum / (float)BlockerCount;
-
-    // 2) 반영 폭: 픽셀마다 다른 깊이 차 * 라이트마다 고정인 PenumbraScale. 텍셀 단위로 제한한다.
-    float KernelTexels = (ReceiverDepth - AvgBlockerDepth) * Info.PenumbraScale * (float)MapWidth;
-    float KernelUV = clamp(KernelTexels, PCSS_MIN_KERNEL_TEXELS, PCSS_MAX_KERNEL_TEXELS) * TexelUV;
-
-    // 3) 가변 반경 PCF: 각 샘플은 하드웨어 2x2 비교 + bilinear.
-    float Lit = 0.0f;
-    [unroll]
-    for (uint j = 0; j < PCSS_PCF_SAMPLES; ++j)
-    {
-        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[j], CosSin) * KernelUV;
-        Lit += ShadowDepth2D.SampleCmpLevelZero(ShadowComparisonSampler, float3(UV + Offset, Info.ShadowMapIndex), CompareDepth);
-    }
-    return Lit / (float)PCSS_PCF_SAMPLES;
-}
-
+// Spot PCSS. 조회 위치와 깊이는 ComputeSpotShadow와 같고, 비교만 FilterShadowPCSS로 바꾼다.
 float ComputeSpotShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
 {
     if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
@@ -482,47 +516,11 @@ float ComputeSpotShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPo
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-
-    uint MapWidth, MapHeight, MapSlices;
-    ShadowDepth2D.GetDimensions(MapWidth, MapHeight, MapSlices);
-    float TexelUV = 1.0f / (float)MapWidth;
-    float2 CosSin = GetPCSSRotation(WorldPosition);
-
-    // 1) 차폐물 탐색
-    float SearchUV = clamp(ComputeLocalPCSSRadius(Info, ReceiverDepth, Info.PCSSNearDepth), PCSS_MIN_KERNEL_TEXELS * TexelUV, PCSS_MAX_SEARCH_TEXELS * TexelUV);
-    float BlockerSum = 0.0f;
-    uint BlockerCount = 0;
-    [unroll]
-    for (uint i = 0; i < PCSS_BLOCKER_SAMPLES; ++i)
-    {
-        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[i], CosSin) * SearchUV;
-        float SampleDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV + Offset, Info.ShadowMapIndex), 0);
-        if (SampleDepth < CompareDepth)
-        {
-            BlockerSum += SampleDepth;
-            ++BlockerCount;
-        }
-    }
-    if (BlockerCount == 0) return 1.0f;
-    if (BlockerCount == PCSS_BLOCKER_SAMPLES) return 0.0f;
-    float AvgBlockerDepth = BlockerSum / (float)BlockerCount;
-
-    // 2) 반영 폭 → UV 커널 반경
-    float KernelUV = clamp(ComputeLocalPCSSRadius(Info, ReceiverDepth, AvgBlockerDepth), PCSS_MIN_KERNEL_TEXELS * TexelUV, PCSS_MAX_KERNEL_TEXELS * TexelUV);
-
-    // 3) 가변 반경 PCF
-    float Lit = 0.0f;
-    [unroll]
-    for (uint j = 0; j < PCSS_PCF_SAMPLES; ++j)
-    {
-        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[j], CosSin) * KernelUV;
-        Lit += ShadowDepth2D.SampleCmpLevelZero(ShadowComparisonSampler, float3(UV + Offset, Info.ShadowMapIndex), CompareDepth);
-    }
-    return Lit / (float)PCSS_PCF_SAMPLES;
+    return FilterShadowPCSS(Info, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), true);
 }
 
-// Point는 UV 대신 방향으로 조회하므로, 광원→P 방향에 수직인 접평면에서 오프셋을 더한다.
-// 큐브 한 면은 접평면 좌표 [-1, 1]을 해상도만큼 덮으므로 1텍셀 ≈ 2 / 해상도이다.
+// Point PCSS. 면 선택과 면별 UV는 ComputePointShadow와 같다. 각 면은 90도 원근 Map이라 Spot과 같은 식을 쓴다.
+// 커널이 면 경계를 넘는 샘플은 그 면의 타일 가장자리로 제한된다(옆 면으로 이어 읽지 않음).
 float ComputePointShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
 {
     if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
@@ -535,53 +533,18 @@ float ComputePointShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldP
     float HalfTexelWorld = Info.HalfTexelScale * Distance;
     float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
     float3 FromLight = ShadowPosition - Info.LightPosition;
-    float ShadowDistance = length(FromLight);
-    float ReceiverDepth = ShadowDistance * Info.InvRadius;
+    float ReceiverDepth = length(FromLight) * Info.InvRadius;
     if (ReceiverDepth <= 0.0f || ReceiverDepth >= 1.0f) return 1.0f;
-    float3 Dir = FromLight / ShadowDistance;
+    uint Face = SelectPointShadowFace(FromLight);
+    if (Face >= Info.MapCount || Face >= NumShadowInfos - ShadowIndex) return 1.0f;
+    FShadowInfo FaceInfo = ShadowInfos[ShadowIndex + Face];
+    float4 Clip = mul(float4(ShadowPosition, 1.0f), FaceInfo.ViewProjection);
+    if (Clip.w <= 0.0f) return 1.0f;
+    float3 Ndc = Clip.xyz / Clip.w;
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-
-    uint FaceSize, FaceHeight, CubeCount;
-    ShadowDepthCube.GetDimensions(FaceSize, FaceHeight, CubeCount);
-    float TexelTan = 2.0f / (float)FaceSize;
-    float3 UpGuide = abs(Dir.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-    float3 Tangent = normalize(cross(UpGuide, Dir));
-    float3 Bitangent = cross(Dir, Tangent);
-    float2 CosSin = GetPCSSRotation(WorldPosition);
-
-    // 1) 차폐물 탐색
-    float SearchTan = clamp(ComputeLocalPCSSRadius(Info, ReceiverDepth, Info.PCSSNearDepth), PCSS_MIN_KERNEL_TEXELS * TexelTan, PCSS_MAX_SEARCH_TEXELS * TexelTan);
-    float BlockerSum = 0.0f;
-    uint BlockerCount = 0;
-    [unroll]
-    for (uint i = 0; i < PCSS_BLOCKER_SAMPLES; ++i)
-    {
-        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[i], CosSin) * SearchTan;
-        float3 SampleDir = Dir + Tangent * Offset.x + Bitangent * Offset.y;
-        float SampleDepth = ShadowDepthCube.SampleLevel(ShadowSampler, float4(SampleDir, Info.ShadowMapIndex), 0);
-        if (SampleDepth < CompareDepth)
-        {
-            BlockerSum += SampleDepth;
-            ++BlockerCount;
-        }
-    }
-    if (BlockerCount == 0) return 1.0f;
-    if (BlockerCount == PCSS_BLOCKER_SAMPLES) return 0.0f;
-    float AvgBlockerDepth = BlockerSum / (float)BlockerCount;
-
-    // 2) 반영 폭 → 접평면 커널 반경
-    float KernelTan = clamp(ComputeLocalPCSSRadius(Info, ReceiverDepth, AvgBlockerDepth), PCSS_MIN_KERNEL_TEXELS * TexelTan, PCSS_MAX_KERNEL_TEXELS * TexelTan);
-
-    // 3) 가변 반경 PCF. 면 경계를 넘는 방향도 하드웨어가 옆 면에서 이어 읽는다.
-    float Lit = 0.0f;
-    [unroll]
-    for (uint j = 0; j < PCSS_PCF_SAMPLES; ++j)
-    {
-        float2 Offset = RotatePCSSSample(PCSSPoissonDisk[j], CosSin) * KernelTan;
-        float3 SampleDir = Dir + Tangent * Offset.x + Bitangent * Offset.y;
-        Lit += ShadowDepthCube.SampleCmpLevelZero(ShadowComparisonSampler, float4(SampleDir, Info.ShadowMapIndex), CompareDepth);
-    }
-    return Lit / (float)PCSS_PCF_SAMPLES;
+    return FilterShadowPCSS(FaceInfo, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), true);
 }
 
 Texture2D AlbedoTexture : register(t0);
@@ -724,11 +687,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
         float Shadow = 1.0f;
         [branch] if (dot(N, L) > 0.0f)
         {
-#if DIRECTIONAL_SHADOW_PCSS
-            Shadow = ComputeDirectionalShadowPCSS(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
-#else
+            // Cascade 선택·혼합 안에서 DIRECTIONAL_SHADOW_PCSS에 따라 PCSS/PCF를 고른다.
             Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
-#endif
         }
         AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }

@@ -13,6 +13,7 @@ class UDirectionalLightComponent : public ULightComponent
         PROPERTY(CascadeMaxDistance)
         PROPERTY(CascadeDistributionExponent)
         PROPERTY(CascadeBlendRatio)
+        PROPERTY(LightSourceAngle)
     REFLECT_END()
 
 public:

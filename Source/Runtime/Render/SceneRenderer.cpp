@@ -543,8 +543,8 @@ bool BuildPointSetup(const FPointLightSceneProxy& Light, uint32 Resolution, FLig
     // 면 중심 기준 T = 2 * d * tan(45도) / Res. 면 가장자리 텍셀은 더 작으므로 중심값이 상한이다.
     Info.HalfTexelScale = 1.0f / static_cast<float>(Resolution);
     Info.NormalOffset = Light.GetShadowNormalOffset();
-    // PCSS 커널 각반경 = 광원 반지름 * (dR - dB) / (dB * dR). 정규화 깊이(거리 / 감쇠 반경)로 쓰면 1 / 감쇠 반경이 남는다.
-    Info.PenumbraScale = std::max(Light.GetSourceRadius(), 0.0f) * Info.InvRadius;
+    // 면마다 90도 원근 Map이므로 Spot과 같은 식에서 tan(45도) = 1이다. 커널 UV = 광원 반지름 * (zR - zB) / (zB * zR) / (2 * 감쇠 반경).
+    Info.PenumbraScale = std::max(Light.GetSourceRadius(), 0.0f) * 0.5f * Info.InvRadius;
     Info.PCSSNearDepth = Projection.NearClip * Info.InvRadius;
     return true;
 }
@@ -1113,6 +1113,9 @@ void FSceneRenderer::PrepareDirectionalShadowCSM(UWorld& World, FShadowFrameData
             const float HalfExtent = ShadowResolution > 1 ? Split.SphereRadius * (static_cast<float>(ShadowResolution) / (ShadowResolution - 1)) : Split.SphereRadius;
             Info.HalfTexelScale = HalfExtent / static_cast<float>(ShadowResolution);
             Info.NormalOffset = Light->GetShadowNormalOffset();
+            // PCSS 커널 반경(월드) = 깊이 차 * tan(각지름/2). Cascade마다 깊이 범위(2 * 구 반지름)와 투영 폭(2 * HalfExtent)이 다르다.
+            const float HalfAngle = FMath::DegreesToRadians(std::max(Light->GetLightSourceAngle(), 0.0f)) * 0.5f;
+            Info.PenumbraScale = std::tan(HalfAngle) * (2.0f * Split.SphereRadius) / (2.0f * HalfExtent);
             Split.DepthPass.MapRequestIndex = RegisterShadowMap(OutData, Index, Info, ShadowResolution);
         }
     }
