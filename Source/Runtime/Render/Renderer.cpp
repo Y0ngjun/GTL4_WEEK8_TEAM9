@@ -40,6 +40,7 @@ namespace
         constexpr uint32 DirectionalDepth = 16;
     }
     constexpr uint32 ShadowSamplerSlot = 1;
+    constexpr uint32 DirectionalShadowCBSlot = 5;
 
     struct FTileLightShadingConstants
     {
@@ -879,7 +880,7 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
 
 bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 Resolution)
 {
-    FShadowResources& Resources = Viewport.GetDirectionalShadow();
+    FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     Resources.ResetFrame();
     const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
     Frame.Resolution = Resolution;
@@ -889,23 +890,40 @@ bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSce
     const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[0];
     const bool bUseCSM = static_cast<const FDirectionalLightSceneProxy*>(Request.Light)->UsesCSM();
     const uint32 PassCount = static_cast<uint32>(bUseCSM ? Frame.CascadeSplits.Num() : Frame.ShadowDepthPassInfos.Num());
-    if (PassCount == 0) return false;
+    if (PassCount == 0)
+		return false;
+
     Resources.RenderedFrame = FrameNumber;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
-    if (!Resources.EnsureCapacity(Resolution, PassCount, 0)) return false;
+    if (!Resources.EnsureCapacity(Resolution, PassCount, 0))
+		return false;
+
     FShaderProgram* Shader = bUseCSM ? ShadowNearClampShader : DepthShader;
     for (uint32 Index = 0; Index < PassCount; ++Index)
     {
         const FShadowDepthPassInfo& Pass = bUseCSM ? Frame.CascadeSplits[Index].DepthPass : Frame.ShadowDepthPassInfos[Index];
-        if (!DrawShadowDepth(Request, Pass, Shader, Resources.Depth2D->GetSliceDSV(Pass.ArraySlice), Resolution, Resolution)) return false;
+        if (!DrawShadowDepth(Request, Pass, Shader, Resources.Depth2D->GetSliceDSV(Pass.ArraySlice), Resolution, Resolution))
+			return false;
     }
+
     Resources.bDepthReady = true;
     for (uint32 Index = 0; Index < PassCount; ++Index)
         Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), Index, false});
-    // todo: Cascade 선택 및 조회는 아직 구현되지 않았다.
-	// CSM 깊이를 Standard 한 장으로 바인딩하지 않는다.
-    if (!bUseCSM) Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
+    if (!Resources.SelectionCB)
+		Resources.SelectionCB = RenderCommand::CreateConstantBuffer(sizeof(FDirectionalShadowConstants));
+    if (!Resources.SelectionCB || !Resources.SelectionCB->GetBuffer())
+		return false;
+
+    FDirectionalShadowConstants Constants;
+    Constants.bUseCSM = bUseCSM ? 1u : 0u;
+    Constants.CascadeCount = static_cast<uint32>(Frame.CascadeSplits.Num());
+    Constants.CascadeViewOrigin = View.RenderLocation;
+    Constants.CascadeViewForward = View.CameraForward;
+    for (uint32 Index = 0; Index < Constants.CascadeCount; ++Index)
+        Constants.CascadeDepthRanges[Index] = FVector4(Frame.CascadeSplits[Index].NearDepth, Frame.CascadeSplits[Index].FarDepth, 0.0f, 0.0f);
+    RenderCommand::UpdateBufferData(Resources.SelectionCB.get(), &Constants);
+    Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
     return true;
 }
 
@@ -922,10 +940,11 @@ bool FRenderer::BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupport
 
 bool FRenderer::BindDirectionalShadow(const FViewport& Viewport, uint64 FrameNumber, bool bSupported)
 {
-    const FShadowResources& Resources = Viewport.GetDirectionalShadow();
+    const FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     const bool bReady = bSupported && Resources.RenderedFrame == FrameNumber && Resources.bReadyForShading;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, bReady ? Resources.ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, bReady ? Resources.Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindConstantBuffer(DirectionalShadowCBSlot, bReady ? Resources.SelectionCB.get() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
     return bReady;
 }

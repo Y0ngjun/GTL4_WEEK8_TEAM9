@@ -814,11 +814,7 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
             if (View)
             {
                 const auto* Directional = static_cast<const FDirectionalLightSceneProxy*>(Light);
-                BuildCascadeSplits(*View, Directional->GetCascadeSettings(), OutData.CascadeSplits);
-                BuildCascadeProjections(*View, Directional->GetInfo().Direction, OutData.Resolution, OutData.CascadeSplits);
-                BuildCascadeCasterQueues(World, Index, OutData.CascadeSplits, OutData.Resolution, Stats);
-                OutData.Required2DSlices = static_cast<uint32>(OutData.CascadeSplits.Num());
-                if (!OutData.CascadeSplits.IsEmpty()) ++Stats.LightsRendered;
+                PrepareDirectionalShadowCSM(World, OutData, View, Index, Directional, OutData.Resolution);
             }
             continue;
         }
@@ -1073,4 +1069,35 @@ void FSceneRenderer::InvalidateShadowCache(uint32 ResourceIndex)
     if (ResourceIndex >= MaxShadowResourceSlots) return;
     for (auto& Pair : WorldShadowFrames[ResourceIndex].CacheEntries)
         for (bool& bValid : Pair.second.bFaceValid) bValid = false;
+}
+
+void FSceneRenderer::PrepareDirectionalShadowCSM(UWorld& World, FShadowFrameData& OutData, const FSceneView* View, uint32 Index, const FDirectionalLightSceneProxy* Light, uint32 ShadowResolution)
+{
+    BuildCascadeSplits(*View, Light->GetCascadeSettings(), OutData.CascadeSplits);
+    BuildCascadeProjections(*View, Light->GetInfo().Direction, ShadowResolution, OutData.CascadeSplits);
+    BuildCascadeCasterQueues(World, Index, OutData.CascadeSplits, ShadowResolution, OutData.CullingStats);
+    OutData.Required2DSlices = static_cast<uint32>(OutData.CascadeSplits.Num());
+    if (!OutData.CascadeSplits.IsEmpty())
+    {
+        ++OutData.CullingStats.LightsRendered;
+        FShadowRequestPerLight& Request = OutData.ShadowRequestsPerLight[Index];
+        Request.ShadowIndex = static_cast<uint32>(OutData.ShadowInfos.Num());
+        for (const FShadowCascadeSplit& Split : OutData.CascadeSplits)
+        {
+            FShadowInfo Info;
+            Info.ViewProjection = Split.DepthPass.ViewProjection;
+            Info.ShadowMapIndex = Split.DepthPass.ArraySlice;
+            Info.LightType = static_cast<uint32>(ELightType::Directional);
+            // 실제 투영 깊이(구의 지름)로 정규화한다.
+            const float InvDepthRange = 1.0f / (2.0f * Split.SphereRadius);
+            Info.InvRadius = InvDepthRange;
+            Info.Bias = Light->GetShadowBias() * InvDepthRange;
+            Info.SlopeBias = Light->GetShadowSlopeBias();
+            Info.MaxSlope = Light->GetShadowMaxSlope();
+            const float HalfExtent = ShadowResolution > 1 ? Split.SphereRadius * (static_cast<float>(ShadowResolution) / (ShadowResolution - 1)) : Split.SphereRadius;
+            Info.HalfTexelScale = HalfExtent / static_cast<float>(ShadowResolution);
+            Info.NormalOffset = Light->GetShadowNormalOffset();
+            OutData.ShadowInfos.Add(Info);
+        }
+    }
 }

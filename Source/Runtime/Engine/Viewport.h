@@ -22,8 +22,8 @@ public:
     void EnsureRenderTargets();
     void UpdateInput(const FViewportInput& Input);
     void ClearSceneData() { SceneRenderData.ResetFrame(); DirectionalShadow.ResetFrame(); }
-    FShadowResources& GetDirectionalShadow() { return DirectionalShadow; }
-    const FShadowResources& GetDirectionalShadow() const { return DirectionalShadow; }
+    FDirectionalShadowResources& GetDirectionalShadow() { return DirectionalShadow; }
+    const FDirectionalShadowResources& GetDirectionalShadow() const { return DirectionalShadow; }
     FSceneView CreateSceneView() const;
     FSceneRenderData& GetSceneRenderData() { return SceneRenderData; }
     const FRenderingInfo& GetRenderingInfo() const { return ViewTargets.RenderingInfo; }
@@ -38,7 +38,7 @@ private:
     FViewportClient* ActiveClient = nullptr;
     FSceneRenderData SceneRenderData;
     FForwardViewTargets ViewTargets;
-    FShadowResources DirectionalShadow;
+    FDirectionalShadowResources DirectionalShadow;
     // 숨김 시 요청 크기는 0. ViewTargets의 실제 할당 크기와 자원은 유지한다.
     uint32 Width = 0;
     uint32 Height = 0;

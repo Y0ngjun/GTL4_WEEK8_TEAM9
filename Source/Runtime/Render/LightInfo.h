@@ -2,6 +2,8 @@
 
 #include "Math/Vector.h"
 
+inline constexpr uint32 MaxShadowCascades = 8;
+
 enum class ELightType : uint8
 {
 	Ambient, Directional, Point, Spot,

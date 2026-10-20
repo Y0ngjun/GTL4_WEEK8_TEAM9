@@ -166,6 +166,17 @@ struct FShadowInfo
     float NormalOffset;   // 무차원 k. k = 1이면 (T/2) * sin(theta), 이론상 최소값
     float Padding;
 };
+cbuffer DirectionalShadowConstants : register(b5)
+{
+    uint bUseCSM;
+    uint CascadeCount;
+    uint2 DirectionalShadowPadding;
+    float3 CascadeViewOrigin;
+    float CascadeOriginPadding;
+    float3 CascadeViewForward;
+    float CascadeForwardPadding;
+    float4 CascadeDepthRanges[8]; // xy=RenderLocation 기준 near/far, zw=padding
+};
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
 Texture2DArray<float> ShadowDepth2D : register(t13);
 TextureCubeArray<float> ShadowDepthCube : register(t14);
@@ -202,6 +213,20 @@ float3 ApplyNormalOffset(FShadowInfo Info, float3 WorldPosition, float3 N, float
     return WorldPosition + N * (Info.NormalOffset * HalfTexelWorld * SinTheta);
 }
 
+// 거리나 NDC.z가 아닌, 분할 생성과 같은 RenderLocation 기준 전방 깊이로 선택한다.
+uint SelectDirectionalShadowInfo(uint ShadowIndex, float3 WorldPosition)
+{
+    if (ShadowIndex == 0xffffffffu || bUseCSM == 0u) return ShadowIndex;
+    float Depth = dot(WorldPosition - CascadeViewOrigin, CascadeViewForward);
+    for (uint Index = 0u; Index < CascadeCount; ++Index)
+    {
+        // 공유 경계에서는 먼저 검사하는 앞쪽 Cascade를 선택한다.
+        if (Depth >= CascadeDepthRanges[Index].x && Depth <= CascadeDepthRanges[Index].y)
+            return ShadowIndex + Index;
+    }
+    return 0xffffffffu;
+}
+
 // Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
 float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
 {
@@ -209,7 +234,9 @@ float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 Worl
     // CPU는 이 View의 Directional 바인딩이 준비된 경우에만 유효 번호를 전달한다.
     if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
 
-    FShadowInfo Info = DirectionalShadowInfos[ShadowIndex];
+    uint InfoIndex = SelectDirectionalShadowInfo(ShadowIndex, WorldPosition);
+    if (InfoIndex == 0xffffffffu) return 1.0f;
+    FShadowInfo Info = DirectionalShadowInfos[InfoIndex];
     float3 N = normalize(GeoNormal);
     float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
 

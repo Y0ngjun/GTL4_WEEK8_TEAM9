@@ -11,6 +11,7 @@
 class UWorld;
 class FScene;
 class UPrimitiveComponent;
+class FDirectionalLightSceneProxy;
 
 // Light별 Caster 컬링에 필요한 값. Light별 준비 함수가 채운다.
 struct FShadowCasterCullContext
@@ -133,6 +134,7 @@ private:
     // 캐시를 확인해 무효인 면만 Caster를 모으고 패스를 낸다. 유효한 면은 지난 쉐도우 맵을 그대로 쓴다.
     // Caster가 하나도 없으면 슬롯을 반납하고 false를 반환한다.
     bool PrepareLightShadow(UWorld& World, uint32 RequestIndex, FWorldShadowFrame& Slot, const FLightShadowSetup& Setup);
+    void PrepareDirectionalShadowCSM(UWorld& World, FShadowFrameData& OutData, const FSceneView* View, uint32 Index, const FDirectionalLightSceneProxy* Light, uint32 ShadowResolution);
     void CaptureWorld(UWorld& World);
     void BuildRenderQueue(const FSceneView& View, FSceneRenderData& Data);
 

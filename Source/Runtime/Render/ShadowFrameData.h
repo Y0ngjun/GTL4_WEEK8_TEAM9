@@ -71,7 +71,7 @@ struct FShadowFrameData
     // Point Light라면 FShadowRequestPerLight 1개가 추가되면 FShadowDepthPassInfo는 6개가 추가된다.
     TArray<FShadowDepthPassInfo> ShadowDepthPassInfos;
 
-    // Light별 준비 함수가 완성된 조회 정보만 추가하고 Request.ShadowIndex를 연결한다.
+    // Light별 준비 함수가 조회 정보를 추가하고 Request.ShadowIndex를 연결한다. CSM은 Cascade별 연속 항목이다.
     TArray<FShadowInfo> ShadowInfos;
 
     // Depth 패스 해상도. Bias의 텍셀 크기(T)도 이 값으로 계산한다.
