@@ -3,6 +3,7 @@
 #include "Render/RenderPacket.h"
 #include "Math/Frustum.h"
 #include "ShadowInfo.h"
+#include "ShadowCulling.h"
 
 class FLightSceneProxy;
 
@@ -14,7 +15,8 @@ struct FShadowRequestPerLight
     // Light의 shadow map이 그려질 배열의 index
     // Light 종류로 배열을 선택한다: Directional/Spot은 Texture2DArray, Point는 CubeArray.
     // 이 Index는 2D 배열에서는 slice 번호, CubeArray에서는 cube 번호다(물리 slice 번호가 아니다).
-    // 배열별로 0부터 배정한다. Scene의 Light 번호나 GPU ShadowInfo 번호와는 무관하다.    
+    // 배열별로 0부터 배정한다. Scene의 Light 번호나 GPU ShadowInfo 번호와는 무관하다.
+    // Caster가 하나도 남지 않은 Light는 배정하지 않으므로, 배정은 Light별 준비가 끝날 때 한다.
     // todo : 현재는 caching을 적용하지 않아서, 매 프레임 shadow map을 다시 그린다.
     uint32 ShadowMapIndex = 0;
 
@@ -62,6 +64,9 @@ struct FShadowFrameData
 
     // Depth 패스 해상도. Bias의 텍셀 크기(T)도 이 값으로 계산한다.
     uint32 Resolution = DefaultShadowResolution;
+
+    // 마지막 준비의 컬링 결과. UI가 프레임 정리 후 읽으므로 ResetFrame에서 지우지 않고 준비 시작 시 지운다.
+    FShadowCullingStats CullingStats;
 
     void ResetFrame()
     {

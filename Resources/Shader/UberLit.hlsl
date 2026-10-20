@@ -399,7 +399,11 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #else
         float GeoFactor = 1.0f;
 #endif
-        float Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
+        // 빛을 등진 면은 기여가 0이므로 쉐도우 맵을 읽지 않는다.
+        // HLSL의 ?:는 양쪽을 모두 계산할 수 있으므로 분기로 건너뛴다.
+        float Shadow = 1.0f;
+        [branch] if (dot(N, L) > 0.0f)
+            Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
         AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }
 
@@ -438,7 +442,9 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #endif
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+            float Shadow = 1.0f;
+            [branch] if (dot(N, L) > 0.0f)
+                Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
@@ -469,7 +475,10 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
 
-            float Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+            // 콘 밖이거나 빛을 등진 면은 기여가 0이므로 쉐도우 맵을 읽지 않는다.
+            float Shadow = 1.0f;
+            [branch] if (SpotAttenuation > 0.0f && dot(N, L) > 0.0f)
+                Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 

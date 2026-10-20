@@ -237,6 +237,11 @@ bool UEditorEngine::Init()
         const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
         return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber() ? Resources : nullptr;
     });
+	SettingsPanel->SetShadowCullingStatsQuery([this]() -> const FShadowCullingStats*
+	{
+		const FWorldContext* Context = GetWorldContextFromWorld(EditorWorld);
+		return Context ? SceneRenderer.GetShadowCullingStats(Context->ShadowResourceIndex) : nullptr;
+	});
 	SettingsPanel->SetHasLitViewQuery([this]()
 	{
 		for (int32 Index = 0; Index < ViewportsPanel->GetSlotCount(); ++Index)
@@ -448,6 +453,24 @@ void UEditorEngine::RenderViewports()
     bPIEWindowRendered = false;
     const bool bRenderPIEWindow = IsPIEInWindow() && UpdatePIEWindowTargets();
     SceneRenderer.BeginFrame();
+    SceneRenderer.SetShadowCullingSettings(SettingsPanel->GetSettings().ShadowCulling);
+    // 쉐도우 맵은 World의 첫 View를 그릴 때 준비되므로, 그 전에 그림자를 쓰는 View를 모두 등록한다.
+    for (int32 ViewIndex = 0; ViewIndex < ViewportsPanel->GetSlotCount(); ++ViewIndex)
+    {
+        FViewport& Viewport = *ViewportsPanel->GetViewport(ViewIndex);
+        FViewportClient* Client = Viewport.GetActiveClient();
+        if (!Viewport.IsVisible() || !Client || !Client->HasCamera())
+            continue;
+        const FSceneView View = Viewport.CreateSceneView();
+        if (ViewSupportsShadows(View))
+            SceneRenderer.AddShadowView(*Client->GetWorld(), View);
+    }
+    if (bRenderPIEWindow && PIEViewport->GetActiveClient()->HasCamera())
+    {
+        const FSceneView View = PIEViewport->CreateSceneView();
+        if (ViewSupportsShadows(View))
+            SceneRenderer.AddShadowView(*PIEViewport->GetActiveClient()->GetWorld(), View);
+    }
     for (int32 ViewIndex = 0; ViewIndex < ViewportsPanel->GetSlotCount(); ++ViewIndex)
     {
         FViewport& Viewport = *ViewportsPanel->GetViewport(ViewIndex);
@@ -874,6 +897,14 @@ void UEditorEngine::UpdateGizmoAndPicking()
 
 }
 
+// Lit + Phong이고 그림자를 가리는 시각화가 꺼진 View만 그림자를 쓴다.
+bool UEditorEngine::ViewSupportsShadows(const FSceneView& View) const
+{
+    const FEditorSettings& Settings = SettingsPanel->GetSettings();
+    return View.RenderMode.ViewMode == EViewMode::Lit && View.RenderMode.ShadingModel == EShadingModel::Phong && Settings.bDrawPrimitives
+        && !Settings.bDepthView && !Settings.bVisualizeTileLightCount;
+}
+
 // View 행렬로 Scene·Grid·Gizmo·텍스트·Outline을 렌더한다.
 void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FSceneView& View, FEditorViewportClient* OverlayClient)
 {
@@ -887,9 +918,7 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 	FSceneRenderData& Data = Viewport.GetSceneRenderData();
 
 	// 지원 View만 공유 그림자를 요청한다. 비지원 View는 다른 View의 결과를 지우지 않는다.
-    const FEditorSettings& ShadowSettings = SettingsPanel->GetSettings();
-    const bool bSupportsShadows = View.RenderMode.ViewMode == EViewMode::Lit && View.RenderMode.ShadingModel == EShadingModel::Phong && ShadowSettings.bDrawPrimitives 
-																&& !ShadowSettings.bDepthView && !ShadowSettings.bVisualizeTileLightCount;
+    const bool bSupportsShadows = ViewSupportsShadows(View);
     uint32 ShadowResourceIndex = InvalidShadowResourceIndex;
     const FShadowFrameData* ShadowFrame = nullptr;
     if (bSupportsShadows)
