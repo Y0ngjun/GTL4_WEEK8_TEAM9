@@ -37,7 +37,7 @@ public:
 	void RemoveAllLights();
 	void MarkLightDirty(FLightSceneProxy* Proxy);
 	// Ambient·Directional은 마지막으로 등록된 것 하나, Point·Spot은 MaxPointLights·MaxSpotLights개까지 담는다.
-	void BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr) const;
+	void BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr, const TArray<FShadowRequestPerLight>* DirectionalShadowRequests = nullptr) const;
 
 	void UpdateAllTransforms();
 
@@ -45,6 +45,12 @@ public:
 
 	void MarkDirty(FPrimitiveSceneProxy* Proxy);
 	void MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy);
+
+	// 쉐도우 맵 캐시 무효화. 바뀐 Primitive의 이전·새 바운드를 쌓아 두고, 그림자 준비 쪽이 가져가며 비운다.
+	// 가져가지 않는 프레임에도 쌓이므로 상한을 넘으면 "전부 무효"로 접는다.
+	void AddShadowInvalidation(const FAABB& Bounds);
+	void InvalidateAllShadows();
+	void ConsumeShadowInvalidations(TArray<FAABB>& OutBounds, bool& bOutAll);
 
 	void BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight = nullptr) const;
 
@@ -70,4 +76,9 @@ public:
 		}
 	};
 	bool bElementListChanged = false;
+
+private:
+	static constexpr int32 MaxShadowInvalidations = 1024;
+	TArray<FAABB> ShadowInvalidationBounds;
+	bool bShadowInvalidateAll = false;
 };

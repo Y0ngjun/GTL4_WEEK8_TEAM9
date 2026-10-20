@@ -30,7 +30,7 @@ bool FShadowResources::EnsureAtlasCapacity(uint32 AtlasSize)
         D3D11_BIND_DEPTH_STENCIL |
         D3D11_BIND_SHADER_RESOURCE;
 
-    auto NewAtlas = MakeUnique<FTexture2D>(RenderCommand::GetDevice(), Desc, static_cast<const void*>(nullptr));
+    auto NewAtlas = MakeShared<FTexture2D>(RenderCommand::GetDevice(), Desc, static_cast<const void*>(nullptr));
 
     if (!NewAtlas->GetRawPtr() ||
         !NewAtlas->GetSRV() ||
@@ -39,6 +39,7 @@ bool FShadowResources::EnsureAtlasCapacity(uint32 AtlasSize)
         return false;
     }
 
+    RenderCommand::GetContext()->ClearDepthStencilView(NewAtlas->GetDSV(), D3D11_CLEAR_DEPTH, 1.0f, 0);
     DepthAtlas = std::move(NewAtlas);
     return true;
 }

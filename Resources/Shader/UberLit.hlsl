@@ -151,22 +151,36 @@ StructuredBuffer<FSpotLightInfo> StructuredSpotLights : register(t9);
 Buffer<uint> TileLightCount : register(t10);
 Buffer<uint> TileLightIndices : register(t11);
 
-// CPU FShadowInfo와 동일한 128-byte 항목.
+// CPU FShadowInfo와 동일한 128-byte StructuredBuffer 항목.
 struct FShadowInfo
 {
     row_major matrix ViewProjection;
     float3 LightPosition;
-    float InvRadius;
+    float InvRadius;      // 월드 거리 -> 비교 깊이. Spot/Point: 1/반경, Directional: 1/(Far-Near)
     uint MapCount;
     uint LightType;
     float Bias;
-    float SlopeBias;
+    float SlopeBias;      // 무차원 k. k = 1이면 (T/2) * tan(theta), 이론상 최소값
     float MaxSlope;
-    float3 Padding;
+    float HalfTexelScale; // 월드 T/2. Directional: 그대로, Spot/Point: 라이트 거리를 곱한다
+    float NormalOffset;   // 무차원 k. k = 1이면 (T/2) * sin(theta), 이론상 최소값
+    float Padding;
     float4 AtlasUVScaleBias;
+};
+cbuffer DirectionalShadowConstants : register(b5)
+{
+    uint bUseCSM;
+    uint CascadeCount;
+    uint2 DirectionalShadowPadding;
+    float3 CascadeViewOrigin;
+    float CascadeOriginPadding;
+    float3 CascadeViewForward;
+    float CascadeForwardPadding;
+    float4 CascadeDepthRanges[8]; // xy=선택 near/far, z=혼합 폭, w=padding
 };
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
 Texture2D<float> ShadowAtlas : register(t13);
+StructuredBuffer<FShadowInfo> DirectionalShadowInfos : register(t15);
 SamplerState ShadowSampler : register(s1);
 
 // 각 Light의 조회 구현에서 이 조건을 통과한 경우에만 ShadowInfos를 읽는다.
@@ -180,11 +194,36 @@ bool CanSampleShadow(uint ShadowIndex, uint ReceiveShadow)
 #endif
 }
 
-float ComputeShadowBias(FShadowInfo Info, float3 GeoNormal, float3 ToLightDirection)
+// 텍셀 중심과 픽셀의 거리는 최대 T/2이고, 그 사이 깊이 차는 (T/2) * tan(theta)다.
+// HalfTexelWorld는 월드 T/2이며, InvRadius로 비교 깊이 단위로 바꾼다.
+float ComputeShadowBias(FShadowInfo Info, float CosTheta, float HalfTexelWorld)
 {
-    float CosTheta = saturate(dot(normalize(GeoNormal), ToLightDirection));
     float TanTheta = sqrt(max(1.0f - CosTheta * CosTheta, 0.0f)) / max(CosTheta, 0.0001f);
-    return Info.Bias + Info.SlopeBias * min(TanTheta, Info.MaxSlope);
+    float SlopeBiasWorld = Info.SlopeBias * HalfTexelWorld * min(TanTheta, Info.MaxSlope);
+    return Info.Bias + SlopeBiasWorld * Info.InvRadius;
+}
+
+// 법선 방향으로 d만큼 띄우면 L 방향 깊이 여유가 d / cos(theta) 생긴다.
+// d = (T/2) * sin(theta)이면 그 여유가 (T/2) * tan(theta)와 같아지므로 k = 1이 이론상 최소값이다.
+// 깊이만 빼는 Bias와 달리 조회 위치가 바뀌므로 UV와 깊이 모두 반환한 위치로 계산한다.
+float3 ApplyNormalOffset(FShadowInfo Info, float3 WorldPosition, float3 N, float CosTheta, float HalfTexelWorld)
+{
+    float SinTheta = sqrt(max(1.0f - CosTheta * CosTheta, 0.0f));
+    return WorldPosition + N * (Info.NormalOffset * HalfTexelWorld * SinTheta);
+}
+
+// 거리나 NDC.z가 아닌, 분할 생성과 같은 RenderLocation 기준 전방 깊이로 선택한다.
+uint SelectDirectionalShadowInfo(uint ShadowIndex, float3 WorldPosition)
+{
+    if (ShadowIndex == 0xffffffffu || bUseCSM == 0u) return ShadowIndex;
+    float Depth = dot(WorldPosition - CascadeViewOrigin, CascadeViewForward);
+    for (uint Index = 0u; Index < CascadeCount; ++Index)
+    {
+        // 공유 경계에서는 먼저 검사하는 앞쪽 Cascade를 선택한다.
+        if (Depth >= CascadeDepthRanges[Index].x && Depth <= CascadeDepthRanges[Index].y)
+            return ShadowIndex + Index;
+    }
+    return 0xffffffffu;
 }
 
 float SampleShadowAtlasDepth(FShadowInfo Info, float2 LocalUV)
@@ -200,40 +239,6 @@ float SampleShadowAtlasDepth(FShadowInfo Info, float2 LocalUV)
     return ShadowAtlas.SampleLevel(ShadowSampler, UV, 0);
 }
 
-// Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
-float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
-{
-    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
-    // TODO(CSM): 현재 View의 깊이로 Cascade를 선택해 ShadowIndex에 더한다.
-    FShadowInfo Info = ShadowInfos[ShadowIndex];
-    float4 Clip = mul(float4(WorldPosition, 1.0f), Info.ViewProjection);
-    float3 Ndc = Clip.xyz / Clip.w;
-    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
-    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
-    float Bias = ComputeShadowBias(Info, GeoNormal, normalize(ToLightDirection));
-    return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
-}
-
-// Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.
-float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
-{
-    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
-    FShadowInfo Info = ShadowInfos[ShadowIndex];
-    float4 Clip = mul(float4(WorldPosition, 1.0f), Info.ViewProjection);
-    if (Clip.w <= 0.0f) return 1.0f;
-    float3 Ndc = Clip.xyz / Clip.w;
-    float3 ToLight = Info.LightPosition - WorldPosition;
-    float Distance = length(ToLight);
-    float ReceiverDepth = Distance * Info.InvRadius;
-    // 범위는 Bias 적용 전에 검사한다. Near 밖/반경 밖의 점은 그림자를 조회하지 않는다.
-    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f || Distance <= 0.0f) return 1.0f;
-    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
-    float Bias = ComputeShadowBias(Info, GeoNormal, ToLight / Distance);
-    return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
-}
-
 uint SelectPointShadowFace(float3 Direction)
 {
     float3 AbsDirection = abs(Direction);
@@ -244,24 +249,105 @@ uint SelectPointShadowFace(float3 Direction)
     return Direction.z >= 0.0f ? 4u : 5u;
 }
 
+// Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
+float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+    FShadowInfo Info = DirectionalShadowInfos[InfoIndex];
+    float3 N = normalize(GeoNormal);
+    float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
+
+    // Orthographic은 텍셀 크기가 맵 전체에서 일정하다.
+    float HalfTexelWorld = Info.HalfTexelScale;
+    float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
+    float4 Clip = mul(float4(ShadowPosition, 1.0f), Info.ViewProjection);
+    float3 Ndc = Clip.xyz / Clip.w;
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
+    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
+    float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
+    return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
+}
+
+float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+{
+#if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
+    // CPU는 이 View의 Directional 바인딩이 준비된 경우에만 유효 번호를 전달한다.
+    if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
+    uint InfoIndex = SelectDirectionalShadowInfo(ShadowIndex, WorldPosition);
+    if (InfoIndex == 0xffffffffu) return 1.0f;
+    float Shadow = SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
+    uint CascadeIndex = InfoIndex - ShadowIndex;
+    if (bUseCSM != 0u && CascadeIndex + 1u < CascadeCount)
+    {
+        float FarDepth = CascadeDepthRanges[CascadeIndex].y;
+        float BlendWidth = CascadeDepthRanges[CascadeIndex].z;
+        float Depth = dot(WorldPosition - CascadeViewOrigin, CascadeViewForward);
+        [branch]
+        if (BlendWidth > 0.0f && Depth >= FarDepth - BlendWidth)
+        {
+            float Weight = saturate((Depth - (FarDepth - BlendWidth)) / BlendWidth);
+            float NextShadow = SampleDirectionalShadow(InfoIndex + 1u, WorldPosition, GeoNormal, ToLightDirection);
+            // 깊이 자체가 아니라 각 행렬·bias로 비교한 그림자 판정값을 혼합한다.
+            Shadow = lerp(Shadow, NextShadow, Weight);
+        }
+    }
+    return Shadow;
+#else
+    return 1.0f;
+#endif
+}
+
+// Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.
+float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
+{
+    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
+    FShadowInfo Info = ShadowInfos[ShadowIndex];
+    float3 ToLight = Info.LightPosition - WorldPosition;
+    float Distance = length(ToLight);
+    if (Distance <= 0.0f) return 1.0f;
+    float3 N = normalize(GeoNormal);
+    float CosTheta = saturate(dot(N, ToLight / Distance));
+    // Perspective는 텍셀 크기가 라이트 거리에 비례한다.
+    float HalfTexelWorld = Info.HalfTexelScale * Distance;
+    float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
+    float4 Clip = mul(float4(ShadowPosition, 1.0f), Info.ViewProjection);
+    if (Clip.w <= 0.0f) return 1.0f;
+    float3 Ndc = Clip.xyz / Clip.w;
+    float ReceiverDepth = length(ShadowPosition - Info.LightPosition) * Info.InvRadius;
+    // 범위는 Bias 적용 전에 검사한다. Near 밖/반경 밖의 점은 그림자를 조회하지 않는다.
+    if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f) return 1.0f;
+    float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
+    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
+    float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
+    return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
+}
+
 float ComputePointShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
 {
     if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
-    FShadowInfo BaseInfo = ShadowInfos[ShadowIndex];
-    float3 FromLight = WorldPosition - BaseInfo.LightPosition;
-    float Distance = length(FromLight);
-    float ReceiverDepth = Distance * BaseInfo.InvRadius;
-    if (Distance <= 0.0f || ReceiverDepth >= 1.0f) return 1.0f;
+    FShadowInfo Info = ShadowInfos[ShadowIndex];
+    float3 ToLight = Info.LightPosition - WorldPosition;
+    float Distance = length(ToLight);
+    if (Distance <= 0.0f) return 1.0f;
+    float3 N = normalize(GeoNormal);
+    float CosTheta = saturate(dot(N, ToLight / Distance));
+    float HalfTexelWorld = Info.HalfTexelScale * Distance;
+    float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
+    float3 FromLight = ShadowPosition - Info.LightPosition;
+    float ReceiverDepth = length(FromLight) * Info.InvRadius;
+    if (ReceiverDepth <= 0.0f || ReceiverDepth >= 1.0f) return 1.0f;
+    // Normal Offset이 적용된 방향으로 면과 UV를 함께 선택한다.
     uint Face = SelectPointShadowFace(FromLight);
-    if (Face >= BaseInfo.MapCount || Face >= NumShadowInfos - ShadowIndex) return 1.0f;
-    FShadowInfo Info = ShadowInfos[ShadowIndex + Face];
-    float4 Clip = mul(float4(WorldPosition, 1.0f), Info.ViewProjection);
+    if (Face >= Info.MapCount || Face >= NumShadowInfos - ShadowIndex) return 1.0f;
+    FShadowInfo FaceInfo = ShadowInfos[ShadowIndex + Face];
+    float4 Clip = mul(float4(ShadowPosition, 1.0f), FaceInfo.ViewProjection);
     if (Clip.w <= 0.0f) return 1.0f;
     float3 Ndc = Clip.xyz / Clip.w;
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
-    float Bias = ComputeShadowBias(Info, GeoNormal, -FromLight / Distance);
+    float StoredDepth = SampleShadowAtlasDepth(FaceInfo, UV);
+    float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
@@ -400,7 +486,11 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #else
         float GeoFactor = 1.0f;
 #endif
-        float Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
+        // 빛을 등진 면은 기여가 0이므로 쉐도우 맵을 읽지 않는다.
+        // HLSL의 ?:는 양쪽을 모두 계산할 수 있으므로 분기로 건너뛴다.
+        float Shadow = 1.0f;
+        [branch] if (dot(N, L) > 0.0f)
+            Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
         AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
     }
 
@@ -439,7 +529,9 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
 #endif
 
             float DistanceAttenuation = ComputeDistanceAttenuation(Distance, Radius);
-            float Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+            float Shadow = 1.0f;
+            [branch] if (dot(N, L) > 0.0f)
+                Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 
@@ -470,7 +562,10 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
                 ? (CosAngle > Light.CosOuterCone ? 1.0f : 0.0f)
                 : saturate((CosAngle - Light.CosOuterCone) / (Light.CosInnerCone - Light.CosOuterCone));
 
-            float Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+            // 콘 밖이거나 빛을 등진 면은 기여가 0이므로 쉐도우 맵을 읽지 않는다.
+            float Shadow = 1.0f;
+            [branch] if (SpotAttenuation > 0.0f && dot(N, L) > 0.0f)
+                Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
 

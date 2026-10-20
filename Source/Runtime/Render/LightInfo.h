@@ -2,12 +2,25 @@
 
 #include "Math/Vector.h"
 
+inline constexpr uint32 MaxShadowCascades = 8;
+
 enum class ELightType : uint8
 {
 	Ambient, Directional, Point, Spot,
 };
 
 inline constexpr uint32 InvalidShadowIndex = ~0u;
+
+// Directional의 CPU 준비 설정. GPU 조명 상수 레이아웃에는 포함하지 않는다.
+struct FShadowCascadeSettings
+{
+    uint32 Count = 4;
+    float MaxDistance = 100.0f;
+    // 인접한 Cascade 구간 길이의 비율. 1은 균등 분할.
+    float DistributionExponent = 3.0f;
+    // 원래 선택 구간 길이 대비 끝부분의 혼합 폭. 0은 혼합 없음.
+    float BlendRatio = 0.1f;
+};
 
 // UberLit.hlsl의 MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS
 constexpr uint32 MaxPointLights = 4;

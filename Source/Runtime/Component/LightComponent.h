@@ -10,6 +10,7 @@ class ULightComponent : public ULightComponentBase
 		PROPERTY(ShadowBias)
 		PROPERTY(ShadowSlopeBias)
 		PROPERTY(ShadowMaxSlope)
+		PROPERTY(ShadowNormalOffset)
 	REFLECT_END()
 
 public:
@@ -30,12 +31,19 @@ public:
 	void SetShadowSlopeBias(float Value) { ShadowSlopeBias = Value; MarkSceneProxyDirty(); }
 	float GetShadowMaxSlope() const { return ShadowMaxSlope; }
 	void SetShadowMaxSlope(float Value) { ShadowMaxSlope = Value; MarkSceneProxyDirty(); }
+	float GetShadowNormalOffset() const { return ShadowNormalOffset; }
+	void SetShadowNormalOffset(float Value) { ShadowNormalOffset = Value; MarkSceneProxyDirty(); }
 
 protected:
 	bool bCastShadow = true;
-	// Bias와 SlopeBias는 월드 거리 단위, MaxSlope는 tan(theta)의 무차원 상한이다.
+	// Bias는 월드 거리 단위다.
+	// SlopeBias는 무차원 k: Slope Bias = k * (T/2) * tan(theta), T는 쉐도우 맵 텍셀의 월드 크기. k = 1이 이론상 최소값이다.
+	// MaxSlope는 tan(theta)의 무차원 상한이다.
 	// 임시값: 실제 기본값은 각 Light의 그림자 구현 단계에서 정한다.
 	float ShadowBias = 0.0f;
 	float ShadowSlopeBias = 0.0f;
 	float ShadowMaxSlope = 0.0f;
+	// 무차원 k: 조회 위치를 법선 방향으로 k * (T/2) * sin(theta)만큼 띄운다. k = 1이 이론상 최소값이다.
+	// 0이면 끈다. Slope Bias와 함께 켜면 두 보정이 더해진다.
+	float ShadowNormalOffset = 0.0f;
 };

@@ -5,9 +5,9 @@
 
 UDirectionalLightComponent::UDirectionalLightComponent()
 {
-    // 월드 거리 단위의 초기값. 실제 장면 크기와 해상도에 맞춘 품질 조정은 별도다.
+    // Bias는 월드 거리, SlopeBias는 텍셀 크기 배수 k(1 = 이론상 최소값)다.
     ShadowBias = 0.001f;
-    ShadowSlopeBias = 0.01f;
+    ShadowSlopeBias = 1.0f;
     ShadowMaxSlope = 2.0f;
 }
 
@@ -22,6 +22,26 @@ FDirectionalLightInfo UDirectionalLightComponent::GetDirectionalLightInfo() cons
 FLightSceneProxy* UDirectionalLightComponent::CreateSceneProxy()
 {
 	return new FDirectionalLightSceneProxy(this);
+}
+
+FShadowCascadeSettings UDirectionalLightComponent::GetCascadeSettings() const
+{
+    FShadowCascadeSettings Settings;
+    Settings.Count = static_cast<uint32>(FMath::Clamp(CascadeCount, 1, static_cast<int32>(MaxShadowCascades)));
+    Settings.MaxDistance = std::isfinite(CascadeMaxDistance) ? std::max(0.0f, CascadeMaxDistance) : 100.0f;
+    Settings.DistributionExponent = std::isfinite(CascadeDistributionExponent) ? FMath::Clamp(CascadeDistributionExponent, 1.0f, 10.0f) : 3.0f;
+    Settings.BlendRatio = std::isfinite(CascadeBlendRatio) ? FMath::Clamp(CascadeBlendRatio, 0.0f, 0.5f) : 0.1f;
+    return Settings;
+}
+
+void UDirectionalLightComponent::PostEditChangeProperty(const FProperty& Property)
+{
+    const FShadowCascadeSettings Settings = GetCascadeSettings();
+    CascadeCount = static_cast<int32>(Settings.Count);
+    CascadeMaxDistance = Settings.MaxDistance;
+    CascadeDistributionExponent = Settings.DistributionExponent;
+    CascadeBlendRatio = Settings.BlendRatio;
+    Super::PostEditChangeProperty(Property);
 }
 
 void UDirectionalLightComponent::DrawDebug(FLineBatcher* LineBatcher) const

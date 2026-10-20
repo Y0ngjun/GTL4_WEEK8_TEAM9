@@ -1253,7 +1253,9 @@ FDetailsPanel::~FDetailsPanel()
 void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
 {
     if (!ImGui::CollapsingHeader("Shadow Map Preview")) return;
-    const FShadowResources* Resources = ShadowPreviewQuery ? ShadowPreviewQuery(Light) : nullptr;
+    FString PreviewSource;
+    const FShadowResources* Resources = ShadowPreviewQuery ? ShadowPreviewQuery(Light, PreviewSource) : nullptr;
+    if (!PreviewSource.empty()) ImGui::TextWrapped("%s", PreviewSource.c_str());
     const FShadowPreviewEntry* Entry = nullptr;
     if (Resources)
         for (const FShadowPreviewEntry& Candidate : Resources->PreviewEntries)
@@ -1264,13 +1266,14 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
         return;
     }
     const int32 MapCount = static_cast<int32>(Entry->MapRects.Num());
-    PreviewFace = std::clamp(PreviewFace, 0, MapCount - 1);
+    int& SelectedMap = Entry->bPoint ? PreviewFace : PreviewCascade;
+    SelectedMap = std::clamp(SelectedMap, 0, MapCount - 1);
     if (Entry->bPoint)
         ImGui::Combo("Face", &PreviewFace, "+X\0-X\0+Y\0-Y\0+Z\0-Z\0");
     else if (MapCount > 1)
-        ImGui::SliderInt("Cascade", &PreviewFace, 0, MapCount - 1);
-    PreviewFace = std::clamp(PreviewFace, 0, MapCount - 1);
-    const FShadowAtlasRect& Rect = Entry->MapRects[static_cast<uint32>(PreviewFace)];
+        ImGui::SliderInt("Cascade", &PreviewCascade, 0, MapCount - 1);
+    SelectedMap = std::clamp(SelectedMap, 0, MapCount - 1);
+    const FShadowAtlasRect& Rect = Entry->MapRects[static_cast<uint32>(SelectedMap)];
     const FTexture* Source = Resources->DepthAtlas.get();
     ID3D11Device* Device = RenderCommand::GetDevice();
     ID3D11DeviceContext* Context = RenderCommand::GetContext();

@@ -21,6 +21,7 @@ public:
 	float GetShadowBias() const { return ShadowBias; }
 	float GetShadowSlopeBias() const { return ShadowSlopeBias; }
 	float GetShadowMaxSlope() const { return ShadowMaxSlope; }
+	float GetShadowNormalOffset() const { return ShadowNormalOffset; }
 	bool IsVisible() const { return bVisible; }
 
 protected:
@@ -30,6 +31,7 @@ protected:
 		ShadowBias = Light->GetShadowBias();
 		ShadowSlopeBias = Light->GetShadowSlopeBias();
 		ShadowMaxSlope = Light->GetShadowMaxSlope();
+		ShadowNormalOffset = Light->GetShadowNormalOffset();
 	}
 
 	// 초기값을 false로 설정하여, Ambient에서 그림자를 생성하지 않도록 만든다.
@@ -37,6 +39,7 @@ protected:
 	float ShadowBias = 0.0f;
 	float ShadowSlopeBias = 0.0f;
 	float ShadowMaxSlope = 0.0f;
+	float ShadowNormalOffset = 0.0f;
 	ULightComponentBase* Component = nullptr;
 	bool bVisible = true;
 
@@ -74,14 +77,20 @@ public:
 	{
 		const UDirectionalLightComponent* Light = static_cast<const UDirectionalLightComponent*>(Component);
 		Info = Light->GetDirectionalLightInfo();
+        CascadeSettings = Light->GetCascadeSettings();
+        bUseCSM = Light->UsesCSM();
 		UpdateShadowSettings(Light);
 		bVisible = Light->IsLightVisible();
 	}
 
 	const FDirectionalLightInfo& GetInfo() const { return Info; }
+    const FShadowCascadeSettings& GetCascadeSettings() const { return CascadeSettings; }
+    bool UsesCSM() const { return bUseCSM; }
 
 private:
 	FDirectionalLightInfo Info;
+    FShadowCascadeSettings CascadeSettings;
+    bool bUseCSM = false;
 };
 
 class FPointLightSceneProxy final : public FLightSceneProxy

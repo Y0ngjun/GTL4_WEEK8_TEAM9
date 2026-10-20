@@ -15,6 +15,10 @@
 struct FShadowFrameData;
 struct FShadowRequestPerLight;
 struct FShadowDepthPassInfo;
+class FViewport;
+class FSceneRenderer;
+class UWorld;
+struct FSceneView;
 
 // Directional의 기존 Depth 셰이더와 b0 크기를 공유하되, 별도 버퍼에 올린다.
 struct FShadowDepthPassConstants
@@ -92,10 +96,12 @@ public:
 	uint32 AllocateShadowResources(bool bEditorWorld);
 	void ReleaseShadowResources(uint32 Index);
 	const FShadowResources* GetShadowResources(uint32 Index) const;
-	bool RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame);
+	const FShadowFrameData* RenderWorldShadows(uint32 Index, UWorld& World, FSceneRenderer& SceneRenderer);
+	bool RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex, uint32 Resolution = DefaultShadowResolution);
 
 	// 매 View 호출한다. 비지원/실패 시 입력을 비워 이전 World의 바인딩을 남기지 않는다.
-	bool BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported);
+	bool BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupported);
+	bool BindDirectionalShadow(const FViewport& Viewport, uint64 FrameNumber, bool bSupported);
 
 	void SetViewMode(const FViewRenderMode& Mode);
 	void SetLighting(const FLightingConstants& GlobalLights, const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights);
@@ -110,8 +116,10 @@ public:
 	void RenderOpaque(const FMatrix& ViewProjection, bool bAfterPrepass = false);
 	void RenderDepthPrepass(const FMatrix& ViewProjection);
 
-	// 호출자가 Atlas를 Clear한 뒤 각 Map의 영역에 깊이를 그린다.
-	bool DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, ID3D11DepthStencilView* DSV, const FShadowAtlasRect& Rect);
+	// Pass 1: 한 면을 Clear하고 그린다.
+	// 호출자가 해당 Request와 렌더 경로에 맞는 깊이 셰이더를 전달한다.
+	// false면 해당 그림자를 셰이딩에 사용하지 않는다.
+	bool DrawShadowDepth(const FShadowRequestPerLight& Request, const FShadowDepthPassInfo& Pass, FShaderProgram* Shader, ID3D11DepthStencilView* DSV, const FShadowAtlasRect& Rect);
 
 	// Gather 전에 World가 불러 가려진 물체를 거른다.
 	FGPUOcclusion& GetGPUOcclusion() { return GPUOcclusion; }
@@ -151,7 +159,10 @@ private:
 	TUniquePtr<FConstantBuffer> LightingCB;
 	TUniquePtr<FConstantBuffer> TileShadingCB;
 	FShaderProgram* DepthShader = nullptr;
+    FShaderProgram* ShadowNearClampShader = nullptr;
 	FShaderProgram* ShadowDistanceShader = nullptr;
+	FShaderProgram* ShadowTileClearShader = nullptr;
+	ComPtr<ID3D11DepthStencilState> ShadowTileClearDepthState;
 
 	// 모든 패킷의 World 행렬을 256바이트 칸에 한 번에 올린 버퍼. D3D11.1 오프셋 바인딩을 못 쓰면 PerObjectCB로 돌아간다.
 	TUniquePtr<FConstantBuffer> PerObjectSlotCB;

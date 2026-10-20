@@ -61,6 +61,8 @@ void FScene::RemovePrimitive(UPrimitiveComponent* Component)
 		if (Found != INDEX_NONE) RenderStateDirtyProxies.RemoveAtSwap(Found);
 	}
 
+	// 사라진 Caster의 그림자가 캐시에 남지 않게 한다.
+	AddShadowInvalidation(Proxy->GetBounds());
 	Component->SceneProxy = nullptr;
 	delete Proxy;
 
@@ -83,6 +85,7 @@ void FScene::RemoveAllPrimitives()
 	RenderStateDirtyProxies.Reset();
 	BVH.Clear();
 	bElementListChanged = true;
+	InvalidateAllShadows();
 }
 
 void FScene::AddFogInfo(uint32 Id, const FFogInfo& FogInfo)
@@ -180,7 +183,7 @@ void FScene::MarkLightDirty(FLightSceneProxy* Proxy)
 	DirtyLights.Add(Proxy);
 }
 
-void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight) const
+void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight, const TArray<FShadowRequestPerLight>* DirectionalShadowRequests) const
 {
 	Out = FLightingConstants{};
 
@@ -195,7 +198,7 @@ void FScene::BuildLightingConstants(FLightingConstants& Out, const TArray<FShado
 			break;
 		case ELightType::Directional:
 			Out.Directional = static_cast<const FDirectionalLightSceneProxy*>(Proxy)->GetInfo();
-			Out.Directional.ShadowIndex = FindShadowIndex(ShadowRequestsPerLight, Proxy);
+			Out.Directional.ShadowIndex = FindShadowIndex(DirectionalShadowRequests, Proxy);
 			break;
 		case ELightType::Point:
 			if (Out.NumPointLights < MaxPointLights)
@@ -221,14 +224,20 @@ void FScene::UpdateAllTransforms()
 {
 	for (FPrimitiveSceneProxy* Proxy : RenderStateDirtyProxies)
 	{
+		// 메시·Material·CastShadow·가시성 변경은 그 자리의 그림자를 바꾼다.
+		AddShadowInvalidation(Proxy->GetBounds());
 		Proxy->UpdateRenderState();
+		AddShadowInvalidation(Proxy->GetBounds());
 		Proxy->bRenderStateQueued = false;
 	}
 	RenderStateDirtyProxies.Reset();
 
 	for (FPrimitiveSceneProxy* Proxy : DirtyProxies)
 	{
+		// 떠난 자리와 새 자리 모두 그림자가 바뀐다.
+		AddShadowInvalidation(Proxy->GetBounds());
 		Proxy->UpdateTransform();
+		AddShadowInvalidation(Proxy->GetBounds());
 		PrimitiveBounds[Proxy->PackedIndex] = Proxy->GetBounds();
 		PrimitiveFlags[Proxy->PackedIndex] = Proxy->GetComponent()->IsVisible() ? 1 : 0;
 		Proxy->bQueuedForUpdate = false;
@@ -307,6 +316,33 @@ void FScene::MarkRenderStateDirty(FPrimitiveSceneProxy* Proxy)
 	if (!Proxy || Proxy->bRenderStateQueued) return;
 	Proxy->bRenderStateQueued = true;
 	RenderStateDirtyProxies.Add(Proxy);
+}
+
+void FScene::AddShadowInvalidation(const FAABB& Bounds)
+{
+	if (bShadowInvalidateAll) return;
+	// 새로 추가된 프록시의 초기 바운드(원점, 크기 0)는 아직 그림자를 만든 적이 없다.
+	if (Bounds.Extent.X <= 0.0f && Bounds.Extent.Y <= 0.0f && Bounds.Extent.Z <= 0.0f) return;
+	if (ShadowInvalidationBounds.Num() >= MaxShadowInvalidations)
+	{
+		InvalidateAllShadows();
+		return;
+	}
+	ShadowInvalidationBounds.Add(Bounds);
+}
+
+void FScene::InvalidateAllShadows()
+{
+	bShadowInvalidateAll = true;
+	ShadowInvalidationBounds.Reset();
+}
+
+void FScene::ConsumeShadowInvalidations(TArray<FAABB>& OutBounds, bool& bOutAll)
+{
+	OutBounds = std::move(ShadowInvalidationBounds);
+	ShadowInvalidationBounds.Reset();
+	bOutAll = bShadowInvalidateAll;
+	bShadowInvalidateAll = false;
 }
 
 void FScene::BuildStructuredLight(TArray<FPointLightInfo>& OutPointLight, TArray<FSpotLightInfo>& OutSpotLight, TArray<FCullingLight>& OutCullingLights, const FMatrix& ViewMatrix, const TArray<FShadowRequestPerLight>* ShadowRequestsPerLight) const

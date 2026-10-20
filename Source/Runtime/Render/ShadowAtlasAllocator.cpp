@@ -63,6 +63,7 @@ bool FShadowAtlasAllocator::AllocateNode(uint32 NodeIndex, uint32 RequestedSize,
         {
             Nodes[NodeIndex].State = ENodeState::Used;
             OutRect = Node.Rect;
+            OutRect.NodeIndex = NodeIndex;
             return true;
         }
 
@@ -84,6 +85,12 @@ bool FShadowAtlasAllocator::AllocateNode(uint32 NodeIndex, uint32 RequestedSize,
 
 void FShadowAtlasAllocator::SplitNode(uint32 NodeIndex)
 {
+    if (Nodes[NodeIndex].FirstChild != ~0u)
+    {
+        Nodes[NodeIndex].State = ENodeState::Split;
+        return;
+    }
+
     const FShadowAtlasRect ParentRect = Nodes[NodeIndex].Rect;
     const uint32 HalfSize = ParentRect.Size / 2;
     const uint32 FirstChild = Nodes.Num();
@@ -95,10 +102,29 @@ void FShadowAtlasAllocator::SplitNode(uint32 NodeIndex)
         NewNode.Rect.X = ParentRect.X + (Child % 2) * HalfSize;
         NewNode.Rect.Y = ParentRect.Y + (Child / 2) * HalfSize;
         NewNode.Rect.Size = HalfSize;
+        NewNode.ParentIndex = NodeIndex;
 
         Nodes.Add(NewNode);
     }
 
     Nodes[NodeIndex].FirstChild = FirstChild;
     Nodes[NodeIndex].State = ENodeState::Split;
+}
+
+void FShadowAtlasAllocator::Free(uint32 NodeIndex)
+{
+    if (NodeIndex >= Nodes.Num() || Nodes[NodeIndex].State != ENodeState::Used) return;
+    Nodes[NodeIndex].State = ENodeState::Free;
+    uint32 ParentIndex = Nodes[NodeIndex].ParentIndex;
+    while (ParentIndex != ~0u)
+    {
+        const uint32 FirstChild = Nodes[ParentIndex].FirstChild;
+        bool bAllFree = true;
+        for (uint32 Child = 0; Child < 4; ++Child)
+            if (Nodes[FirstChild + Child].State != ENodeState::Free) bAllFree = false;
+        if (!bAllFree) break;
+        // 자식 인덱스는 유지하고 다음 분할에서 재사용한다.
+        Nodes[ParentIndex].State = ENodeState::Free;
+        ParentIndex = Nodes[ParentIndex].ParentIndex;
+    }
 }

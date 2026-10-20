@@ -7,6 +7,7 @@ struct FShadowAtlasRect
 	uint32 X = 0;
 	uint32 Y = 0;
 	uint32 Size = 0;
+	uint32 NodeIndex = ~0u;
 
 	bool IsValid() const { return Size != 0; }
 };
@@ -24,6 +25,8 @@ public:
 
 	// 요청 크기는 MinBlockSize 이상인 2의 거듭제곱이다.
 	bool Allocate(uint32 RequestedSize, FShadowAtlasRect& OutRect);
+	void Free(uint32 NodeIndex);
+	uint32 GetAtlasSize() const { return AtlasSize; }
 
 private:
 	enum class ENodeState : uint8
@@ -39,6 +42,7 @@ private:
 		ENodeState State = ENodeState::Free;
 
 		uint32 FirstChild = ~0u;
+		uint32 ParentIndex = ~0u;
 	};
 
 	bool AllocateNode(uint32 NodeIndex, uint32 RequestedSize, FShadowAtlasRect& OutRect);
