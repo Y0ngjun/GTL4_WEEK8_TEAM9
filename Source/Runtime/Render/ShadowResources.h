@@ -17,7 +17,7 @@ struct FShadowPreviewEntry
     bool bCube;
 };
 
-// Renderer의 한 World 슬롯이 소유한다. World/Context 포인터는 보관하지 않는다.
+// World 슬롯 또는 Viewport가 소유한다. World/Context 포인터는 보관하지 않는다.
 struct FShadowResources
 {
     TUniquePtr<FTexture2DArray> Depth2D;
@@ -32,6 +32,16 @@ struct FShadowResources
 
     uint64 RenderedFrame = 0;
     bool bDepthReady = false;
+
+    // GPU 할당은 유지하고 이번 프레임의 결과만 무효화한다.
+    void ResetFrame()
+    {
+        RenderedFrame = 0;
+        bDepthReady = false;
+        bReadyForShading = false;
+        NumShadowInfos = 0;
+        PreviewEntries.Reset();
+    }
 
     // 필요한 크기만 늘리고 충분한 기존 할당은 재사용한다. 실패하면 기존 자원은 유지한다.
     bool EnsureCapacity(uint32 Resolution, uint32 SliceCount, uint32 CubeCount);

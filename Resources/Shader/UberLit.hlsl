@@ -169,6 +169,8 @@ struct FShadowInfo
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
 Texture2DArray<float> ShadowDepth2D : register(t13);
 TextureCubeArray<float> ShadowDepthCube : register(t14);
+StructuredBuffer<FShadowInfo> DirectionalShadowInfos : register(t15);
+Texture2DArray<float> DirectionalShadowDepth : register(t16);
 SamplerState ShadowSampler : register(s1);
 
 // 각 Light의 조회 구현에서 이 조건을 통과한 경우에만 ShadowInfos를 읽는다.
@@ -203,20 +205,28 @@ float3 ApplyNormalOffset(FShadowInfo Info, float3 WorldPosition, float3 N, float
 // Directional은 Pass 1의 하드웨어 깊이와 같은 Orthographic NDC.z를 비교한다.
 float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
 {
-    if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
-    FShadowInfo Info = ShadowInfos[ShadowIndex];
+#if VIEWMODE == VIEWMODE_LIT && SHADING_MODEL == SHADING_MODEL_PHONG
+    // CPU는 이 View의 Directional 바인딩이 준비된 경우에만 유효 번호를 전달한다.
+    if (ReceiveShadow == 0u || ShadowIndex == 0xffffffffu) return 1.0f;
+
+    FShadowInfo Info = DirectionalShadowInfos[ShadowIndex];
     float3 N = normalize(GeoNormal);
     float CosTheta = saturate(dot(N, normalize(ToLightDirection)));
+
     // Orthographic은 텍셀 크기가 맵 전체에서 일정하다.
     float HalfTexelWorld = Info.HalfTexelScale;
     float3 ShadowPosition = ApplyNormalOffset(Info, WorldPosition, N, CosTheta, HalfTexelWorld);
     float4 Clip = mul(float4(ShadowPosition, 1.0f), Info.ViewProjection);
     float3 Ndc = Clip.xyz / Clip.w;
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
+
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = ShadowDepth2D.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
+    float StoredDepth = DirectionalShadowDepth.SampleLevel(ShadowSampler, float3(UV, Info.ShadowMapIndex), 0);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return Ndc.z - Bias <= StoredDepth ? 1.0f : 0.0f;
+#else
+    return 1.0f;
+#endif
 }
 
 // Spot은 UV만 투영 행렬로 구하고, 깊이는 Pass 1과 동일한 거리/반경으로 비교한다.

@@ -15,6 +15,9 @@
 struct FShadowFrameData;
 struct FShadowRequestPerLight;
 struct FShadowDepthPassInfo;
+class FViewport;
+class FSceneRenderer;
+class UWorld;
 
 // Directional의 기존 Depth 셰이더와 b0 크기를 공유하되, 별도 버퍼에 올린다.
 struct FShadowDepthPassConstants
@@ -92,10 +95,12 @@ public:
 	uint32 AllocateShadowResources(bool bEditorWorld);
 	void ReleaseShadowResources(uint32 Index);
 	const FShadowResources* GetShadowResources(uint32 Index) const;
-	bool RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame, uint32 Resolution = DefaultShadowResolution);
+	const FShadowFrameData* RenderWorldShadows(uint32 Index, UWorld& World, FSceneRenderer& SceneRenderer);
+	bool RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, FShadowFrameData& Frame, uint32 Resolution = DefaultShadowResolution);
 
 	// 매 View 호출한다. 비지원/실패 시 입력을 비워 이전 World의 바인딩을 남기지 않는다.
-	bool BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported);
+	bool BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupported);
+	bool BindDirectionalShadow(const FViewport& Viewport, uint64 FrameNumber, bool bSupported);
 
 	void SetViewMode(const FViewRenderMode& Mode);
 	void SetLighting(const FLightingConstants& GlobalLights, const TArray<FPointLightInfo>& PointLights, const TArray<FSpotLightInfo>& SpotLights);

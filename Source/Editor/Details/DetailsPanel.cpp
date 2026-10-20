@@ -1253,7 +1253,9 @@ FDetailsPanel::~FDetailsPanel()
 void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
 {
     if (!ImGui::CollapsingHeader("Shadow Map Preview")) return;
-    const FShadowResources* Resources = ShadowPreviewQuery ? ShadowPreviewQuery(Light) : nullptr;
+    FString PreviewSource;
+    const FShadowResources* Resources = ShadowPreviewQuery ? ShadowPreviewQuery(Light, PreviewSource) : nullptr;
+    if (!PreviewSource.empty()) ImGui::TextWrapped("%s", PreviewSource.c_str());
     const FShadowPreviewEntry* Entry = nullptr;
     if (Resources)
         for (const FShadowPreviewEntry& Candidate : Resources->PreviewEntries)

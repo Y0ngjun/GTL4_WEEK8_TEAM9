@@ -5,6 +5,8 @@
 #include "Containers/Map.h"
 #include "Render/ShadowFrameData.h"
 #include "Render/ShadowResources.h"
+#include "Render/LightInfo.h"
+#include <initializer_list>
 
 class UWorld;
 class FScene;
@@ -64,6 +66,9 @@ public:
     void AddShadowView(const UWorld& World, const FSceneView& View);
     // 같은 자원 슬롯은 이번 프레임에 한 번만 준비한다. World 교체 전 ReleaseWorldShadows가 필요하다.
     const FShadowFrameData* PrepareWorldShadows(UWorld& World, uint32 ResourceIndex);
+    // 캐시를 사용하지 않는 출력은 호출마다 준비한다. 호출 시점은 Renderer가 결정한다.
+    void PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes);
+    const FShadowFrameData& GetWorldShadowFrame(uint32 ResourceIndex) const { return WorldShadowFrames[ResourceIndex].Data; }
     void ReleaseWorldShadows(uint32 ResourceIndex);
     // GPU 쉐도우 맵 내용을 믿을 수 없을 때(렌더 실패 등) 호출한다. 다음 준비에서 모든 면을 다시 그린다.
     void InvalidateShadowCache(uint32 ResourceIndex);
@@ -77,7 +82,7 @@ public:
 
     // Scene의 Proxy 갱신 후 호출한다. 자료 보관과 프레임당 호출 제어는 호출자가 담당한다.
     // Light 단위 컬링(강도, View, 거리, 화면 크기)을 여기서 한다. 출력 위치는 아직 배정하지 않는다.
-    void BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData);
+    void BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes);
     // Scene BVH가 최신이고 Pass.Frustum이 채워진 상태에서 호출한다.
     // Caster 단위 컬링(플래그, 라이트 프러스텀, 그림자 볼륨 ∩ View, 쉐도우 맵 상 크기)을 한다.
     // todo: 현재는 LOD 0만 사용한다.

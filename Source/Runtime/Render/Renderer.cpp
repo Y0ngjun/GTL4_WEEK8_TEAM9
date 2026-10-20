@@ -1,7 +1,9 @@
 #include "EnginePCH.h"
 #include "Renderer.h"
 #include "ShadowFrameData.h"
+#include "SceneRenderer.h"
 #include "Engine/LightSceneProxy.h"
+#include "Engine/Viewport.h"
 #include "Shader.h"
 #include "Mesh.h"
 
@@ -34,6 +36,8 @@ namespace
         constexpr uint32 Infos = 12;
         constexpr uint32 Texture2DArray = 13;
         constexpr uint32 TextureCubeArray = 14;
+        constexpr uint32 DirectionalInfos = 15;
+        constexpr uint32 DirectionalDepth = 16;
     }
     constexpr uint32 ShadowSamplerSlot = 1;
 
@@ -797,63 +801,117 @@ const FShadowResources* FRenderer::GetShadowResources(uint32 Index) const
     return Index < MaxShadowResourceSlots ? WorldShadowResources[Index].get() : nullptr;
 }
 
-bool FRenderer::RenderWorldShadows(uint32 Index, uint64 FrameNumber, const FShadowFrameData& Frame, uint32 Resolution)
+const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& World, FSceneRenderer& SceneRenderer)
 {
-    if (Index >= MaxShadowResourceSlots || !WorldShadowResources[Index] || FrameNumber == 0) return false;
-    FShadowResources& Resources = *WorldShadowResources[Index];
-    if (Resources.RenderedFrame == FrameNumber) return Resources.bDepthReady;
-    // 실패/미구현도 이번 프레임에는 재실행하지 않는다. 이전 결과를 ready로 노출하지 않는다.
-    Resources.RenderedFrame = FrameNumber;
-    Resources.bDepthReady = false;
-    Resources.bReadyForShading = false;
-    Resources.NumShadowInfos = 0;
-    Resources.PreviewEntries.Reset();
-    // 캐시된 Light만 있으면 이번 프레임 패스가 없을 수 있다. 조회할 Light가 없을 때만 그림자를 끈다.
-    if (Frame.ShadowInfos.IsEmpty()) return false;
+    const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
+    if (Index >= MaxShadowResourceSlots || !WorldShadowResources[Index] || FrameNumber == 0) return nullptr;
 
-    // 캐시된 Light의 슬롯도 배열 안에 있어야 하므로 패스가 아니라 SceneRenderer의 슬롯 사용 범위로 크기를 정한다.
+    FShadowResources& Resources = *WorldShadowResources[Index];
+    if (Resources.RenderedFrame == FrameNumber)
+        return Resources.bReadyForShading ? &SceneRenderer.GetWorldShadowFrame(Index) : nullptr;
+
+    // 실패한 경우에도 이번 프레임에는 다시 실행하지 않는다.
+    Resources.ResetFrame();
+    Resources.RenderedFrame = FrameNumber;
+
+    const FShadowFrameData* PreparedFrame = SceneRenderer.PrepareWorldShadows(World, Index);
+    if (!PreparedFrame) return nullptr;
+
+    const FShadowFrameData& Frame = *PreparedFrame;
+
+    // 모든 패스가 캐시되어 있어도 조회 정보는 남는다.
+    if (Frame.ShadowInfos.IsEmpty()) return nullptr;
+
+    const auto Fail = [&]() -> const FShadowFrameData*
+    {
+        SceneRenderer.InvalidateShadowCache(Index);
+        return nullptr;
+    };
+
+    const uint32 Resolution = Frame.Resolution;
     const uint32 SliceCount = Frame.Required2DSlices;
     const uint32 CubeCount = Frame.RequiredCubes;
+
     for (const FShadowDepthPassInfo& Pass : Frame.ShadowDepthPassInfos)
     {
-        if (Pass.RequestIndex >= static_cast<uint32>(Frame.ShadowRequestsPerLight.Num())) return false;
+        if (Pass.RequestIndex >= static_cast<uint32>(Frame.ShadowRequestsPerLight.Num())) return Fail();
+
         const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[Pass.RequestIndex];
-        if (!Request.Light) return false;
+        if (!Request.Light) return Fail();
+
         if (Request.Light->GetLightType() == ELightType::Point)
         {
-            if (Request.ShadowMapIndex >= CubeCount || Pass.ArraySlice / FTextureCubeArray::FaceCount != Request.ShadowMapIndex) return false;
+            if (Request.ShadowMapIndex >= CubeCount || Pass.ArraySlice / FTextureCubeArray::FaceCount != Request.ShadowMapIndex) return Fail();
         }
         else
         {
-            if (Request.Light->GetLightType() != ELightType::Directional && Request.Light->GetLightType() != ELightType::Spot) return false;
-            if (Pass.ArraySlice != Request.ShadowMapIndex || Pass.ArraySlice >= SliceCount) return false;
+            if (Request.Light->GetLightType() != ELightType::Spot) return Fail();
+            if (Pass.ArraySlice != Request.ShadowMapIndex || Pass.ArraySlice >= SliceCount) return Fail();
         }
     }
-    if (!Resources.EnsureCapacity(Resolution, SliceCount, CubeCount)) return false;
+
+    if (!Resources.EnsureCapacity(Resolution, SliceCount, CubeCount)) return Fail();
+
     for (const FShadowDepthPassInfo& Pass : Frame.ShadowDepthPassInfos)
     {
         const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[Pass.RequestIndex];
         ID3D11DepthStencilView* DSV = Request.Light->GetLightType() == ELightType::Point
             ? Resources.DepthCube->GetFaceDSV(Request.ShadowMapIndex, Pass.ArraySlice % FTextureCubeArray::FaceCount)
             : Resources.Depth2D->GetSliceDSV(Pass.ArraySlice);
-        if (!DrawShadowDepth(Request, Pass, DSV, Resolution, Resolution)) return false;
+
+        if (!DrawShadowDepth(Request, Pass, DSV, Resolution, Resolution)) return Fail();
     }
+
+    if (!Resources.UploadShadowInfos(Frame.ShadowInfos)) return Fail();
+
     Resources.bDepthReady = true;
+    Resources.bReadyForShading = true;
+
     for (const FShadowRequestPerLight& Request : Frame.ShadowRequestsPerLight)
         if (Request.ShadowIndex != InvalidShadowIndex)
             Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), Request.ShadowMapIndex, Request.Light->GetLightType() == ELightType::Point});
-    // Pass와 조회 정보의 연결 및 Cube 6면 준비는 Light별 준비 코드가 책임진다.
+
+    return &Frame;
+}
+
+bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, FShadowFrameData& Frame, uint32 Resolution)
+{
+    FShadowResources& Resources = Viewport.GetDirectionalShadow();
+    Resources.ResetFrame();
+    const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
+    Frame.Resolution = Resolution;
+    SceneRenderer.PrepareShadows(World, Frame, {ELightType::Directional});
+    if (FrameNumber == 0 || Frame.ShadowDepthPassInfos.IsEmpty()) return false;
+    Resources.RenderedFrame = FrameNumber;
+    const FShadowRequestPerLight& Request = Frame.ShadowRequestsPerLight[0];
+    const FShadowDepthPassInfo& Pass = Frame.ShadowDepthPassInfos[0];
+    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
+    if (!Resources.EnsureCapacity(Resolution, 1, 0)) return false;
+    if (!DrawShadowDepth(Request, Pass, Resources.Depth2D->GetSliceDSV(0), Resolution, Resolution)) return false;
+    Resources.bDepthReady = true;
+    Resources.PreviewEntries.Add({Request.Light->GetComponent()->GetUUID(), 0, false});
     Resources.bReadyForShading = Resources.UploadShadowInfos(Frame.ShadowInfos);
     return true;
 }
 
-bool FRenderer::BindShadowResources(uint32 Index, uint64 FrameNumber, bool bSupported)
+bool FRenderer::BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupported)
 {
     const FShadowResources* Resources = GetShadowResources(Index);
     const bool bReady = bSupported && Resources && Resources->RenderedFrame == FrameNumber && Resources->bReadyForShading;
     RenderCommand::BindShaderResource(ShadowSRVSlots::Infos, bReady ? Resources->ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindShaderResource(ShadowSRVSlots::Texture2DArray, bReady && Resources->Depth2D ? Resources->Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindShaderResource(ShadowSRVSlots::TextureCubeArray, bReady && Resources->DepthCube ? Resources->DepthCube->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
+    return bReady;
+}
+
+bool FRenderer::BindDirectionalShadow(const FViewport& Viewport, uint64 FrameNumber, bool bSupported)
+{
+    const FShadowResources& Resources = Viewport.GetDirectionalShadow();
+    const bool bReady = bSupported && Resources.RenderedFrame == FrameNumber && Resources.bReadyForShading;
+    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, bReady ? Resources.ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalDepth, bReady ? Resources.Depth2D->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
     return bReady;
 }

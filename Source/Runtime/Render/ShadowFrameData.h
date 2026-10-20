@@ -46,9 +46,9 @@ struct FShadowDepthPassInfo
 };
 
 
-// 한 World의 이번 프레임 CPU 준비 자료. GPU 그림자 배열 자체를 소유하지 않는다.
-// GPU 배열은 Renderer가 소유하고 WorldContext가 자원 슬롯을 가리킨다.
-// 매 프레임 깊이를 다시 그리되 같은 World의 여러 View는 그 프레임 결과를 공유한다.
+// 이번 프레임 CPU 준비 자료. GPU 그림자 배열 자체를 소유하지 않는다.
+// Point/Spot은 World별로 공유하고 Directional은 View 렌더 호출 안에서 소비한다.
+// GPU 배열은 각각 Renderer의 World 슬롯과 Viewport가 소유한다.
 // GPU 배열 할당은 재사용하며, 사용할 면의 깊이는 Draw 전에 Clear한다.
 struct FShadowFrameData
 {

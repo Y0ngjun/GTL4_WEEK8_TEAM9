@@ -369,33 +369,34 @@ void FSceneRenderer::BuildRenderQueue(const FSceneView& View, FSceneRenderData& 
         PendingStaticMeshes[I]->SubmitToRenderQueue(OutQueue, SelectedLODs[I]);
 }
 
-void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData)
+void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes)
 {
     // 이전 CPU 요청/Queue만 비운다. GPU 배열을 해제하거나 재생성하는 처리가 아니다.
     OutData.ResetFrame();
     OutData.CullingStats = {};
     FShadowCullingStats& Stats = OutData.CullingStats;
-    const FLightSceneProxy* Directional = nullptr;
-    for (const FLightSceneProxy* Light : Scene.Lights)
-        if (Light->IsVisible() && Light->GetLightType() == ELightType::Directional)
-            Directional = Light;
-
-    // 기존 Directional 선택과 동일하게 마지막 visible 광원만 사용한다.
-    // Directional은 장면 전체를 비추므로 View·거리·화면 크기 기준을 적용하지 않는다.
-    if (Directional && Directional->CastsShadow())
-    {
-        ++Stats.LightsConsidered;
-        OutData.ConsideredLightIds.Add(Directional->GetComponent()->GetUUID());
-        if (IsBlack(static_cast<const FDirectionalLightSceneProxy*>(Directional)->GetInfo().Color))
-            ++Stats.LightsCulledByIntensity;
-        else
-            OutData.ShadowRequestsPerLight.Add({Directional});
-    }
-
-    // BuildStructuredLight와 같은 visible 조건·Point/Spot 순서다.
+    // 호출자가 지정한 Light 종류만 준비한다.
     // 출력 위치는 Caster 컬링까지 끝난 뒤 Light별 준비 함수가 배정한다.
-    for (ELightType Type : {ELightType::Point, ELightType::Spot})
+    for (ELightType Type : LightTypes)
     {
+        if (Type == ELightType::Directional)
+        {
+            const FLightSceneProxy* Directional = nullptr;
+            for (const FLightSceneProxy* Light : Scene.Lights)
+                if (Light->IsVisible() && Light->GetLightType() == Type)
+                    Directional = Light;
+            // 조명과 동일하게 마지막 visible Directional만 사용한다.
+            if (Directional && Directional->CastsShadow())
+            {
+                ++Stats.LightsConsidered;
+                OutData.ConsideredLightIds.Add(Directional->GetComponent()->GetUUID());
+                if (IsBlack(static_cast<const FDirectionalLightSceneProxy*>(Directional)->GetInfo().Color))
+                    ++Stats.LightsCulledByIntensity;
+                else
+                    OutData.ShadowRequestsPerLight.Add({Directional});
+            }
+            continue;
+        }
         for (const FLightSceneProxy* Light : Scene.Lights)
         {
             if (!Light->IsVisible() || Light->GetLightType() != Type) continue;
@@ -664,6 +665,77 @@ bool BuildDirectionalSetup(UWorld& World, const FDirectionalLightSceneProxy& Lig
 }
 }
 
+void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes)
+{
+    OutData.ResetFrame();
+    OutData.CullingStats = {};
+    if (!bFrameActive) return;
+
+    PreparingShadowViews.Reset();
+    for (const FRegisteredShadowView& Registered : RegisteredShadowViews)
+        if (Registered.World == &World) PreparingShadowViews.Add(Registered.View);
+
+    BuildShadowRequests(World.GetScene(), OutData, LightTypes);
+    FShadowCullingStats& Stats = OutData.CullingStats;
+    for (uint32 Index = 0; Index < static_cast<uint32>(OutData.ShadowRequestsPerLight.Num()); ++Index)
+    {
+        FShadowRequestPerLight& Request = OutData.ShadowRequestsPerLight[Index];
+        const FLightSceneProxy* Light = Request.Light;
+        FLightShadowSetup Setup;
+        bool bValidSetup = false;
+        switch (Light->GetLightType())
+        {
+        case ELightType::Directional:
+            bValidSetup = BuildDirectionalSetup(World, *static_cast<const FDirectionalLightSceneProxy*>(Light), OutData.Resolution, Setup);
+            break;
+        case ELightType::Spot:
+            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), OutData.Resolution, Setup);
+            break;
+        case ELightType::Point:
+            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), OutData.Resolution, Setup);
+            break;
+        default:
+            break;
+        }
+        if (!bValidSetup) continue;
+
+        const bool bCube = Light->GetLightType() == ELightType::Point;
+        FShadowDepthPassInfo Passes[MaxShadowPassesPerLight];
+        bool bHasCaster = false;
+        for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+        {
+            FShadowDepthPassInfo& Pass = Passes[Face];
+            Pass.RequestIndex = Index;
+            Pass.ViewProjection = Setup.ViewProjections[Face];
+            Pass.Frustum = Setup.Frusta[Face];
+            if (bCube && ShadowCullingSettings.bCullLightsByView &&
+                !IsPointFaceVisible(Setup.Context.LightPosition, Setup.Context.ExtrudeDistance, Setup.FaceForward[Face], Setup.FaceRight[Face], Setup.FaceUp[Face], PreparingShadowViews))
+                ++Stats.PointFacesCulled;
+            else
+                BuildShadowCasterQueue(World, Pass, Setup.Context, Stats);
+            bHasCaster = bHasCaster || !Pass.CasterPackets.IsEmpty();
+        }
+        if (!bHasCaster)
+        {
+            ++Stats.LightsCulledByNoCaster;
+            continue;
+        }
+
+        Request.ShadowMapIndex = bCube ? OutData.RequiredCubes++ : OutData.Required2DSlices++;
+        for (uint32 Face = 0; Face < Setup.PassCount; ++Face)
+        {
+            Passes[Face].ArraySlice = bCube ? Request.ShadowMapIndex * FTextureCubeArray::FaceCount + Face : Request.ShadowMapIndex;
+            OutData.ShadowDepthPassInfos.Add(std::move(Passes[Face]));
+            ++Stats.ShadowPassesDrawn;
+        }
+        FShadowInfo Info = Setup.Info;
+        Info.ShadowMapIndex = Request.ShadowMapIndex;
+        Request.ShadowIndex = static_cast<uint32>(OutData.ShadowInfos.Num());
+        OutData.ShadowInfos.Add(Info);
+        ++Stats.LightsRendered;
+    }
+}
+
 const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint32 ResourceIndex)
 {
     if (!bFrameActive || ResourceIndex >= MaxShadowResourceSlots) return nullptr;
@@ -674,7 +746,7 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     for (const FRegisteredShadowView& Registered : RegisteredShadowViews)
         if (Registered.World == &World) PreparingShadowViews.Add(Registered.View);
 
-    BuildShadowRequests(World.GetScene(), Slot.Data);
+    BuildShadowRequests(World.GetScene(), Slot.Data, {ELightType::Point, ELightType::Spot});
     FShadowCullingStats& Stats = Slot.Data.CullingStats;
     const bool bCaching = ShadowCullingSettings.bCacheShadowMaps;
     Stats.bCaching = bCaching;
@@ -716,9 +788,6 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
         bool bValidSetup = false;
         switch (Light->GetLightType())
         {
-        case ELightType::Directional:
-            bValidSetup = BuildDirectionalSetup(World, *static_cast<const FDirectionalLightSceneProxy*>(Light), Slot.Data.Resolution, Setup);
-            break;
         case ELightType::Spot:
             bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), Slot.Data.Resolution, Setup);
             break;
