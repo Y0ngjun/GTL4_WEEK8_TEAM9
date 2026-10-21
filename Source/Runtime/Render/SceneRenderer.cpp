@@ -997,12 +997,22 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     }
 
 
-    // 2. Light별 준비.
+    // 2. 실제 타일 해상도가 큰 광원부터 처리한다. Point의 6면은 요청 하나로 유지한다.
+    // 아직 Map/Pass 인덱스를 만들기 전이므로 광원 요청 순서를 바꿔도 참조가 유지된다.
+    for (FShadowRequestPerLight& Request : Slot.Data.ShadowRequestsPerLight)
+        Request.ScreenRatio = ComputeLocalShadowScreenRatio(*Request.Light, PreparingShadowViews);
+    std::stable_sort(Slot.Data.ShadowRequestsPerLight.begin(), Slot.Data.ShadowRequestsPerLight.end(),
+        [](const FShadowRequestPerLight& A, const FShadowRequestPerLight& B)
+        {
+            return CalcShadowTileResolution(A.ScreenRatio, A.Light->GetShadowMapResolution())
+                > CalcShadowTileResolution(B.ScreenRatio, B.Light->GetShadowMapResolution());
+        });
+
+    // 같은 해상도는 기존 순서를 유지하고, 캐시된 타일은 기존 위치를 재사용한다.
     for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
     {
         FShadowRequestPerLight& Request = Slot.Data.ShadowRequestsPerLight[Index];
         const FLightSceneProxy* Light = Request.Light;
-        Request.ScreenRatio = ComputeLocalShadowScreenRatio(*Light, PreparingShadowViews);
         const uint32 Resolution = CalcShadowTileResolution(Request.ScreenRatio, Light->GetShadowMapResolution());
         if (Resolution == 0)
         {
