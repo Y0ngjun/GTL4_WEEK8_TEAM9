@@ -13,14 +13,14 @@
                             "Properties": {
                                 "Transform": {
                                     "Location": {
-                                        "X": -18.891206741333008,
-                                        "Y": 0.0,
-                                        "Z": 15.376136779785156
+                                        "X": 15.626701354980469,
+                                        "Y": 3.8105385303497314,
+                                        "Z": 10.670000076293945
                                     },
                                     "Rotation": {
-                                        "Pitch": 2.436807632446289,
+                                        "Pitch": 2.9000000953674316,
                                         "Roll": 0.0,
-                                        "Yaw": 0.0
+                                        "Yaw": -138.5915985107422
                                     },
                                     "Scale": {
                                         "X": 1.0,
@@ -54,240 +54,8 @@
                                         "Z": 1.0
                                     }
                                 },
-                                "bVisible": true
-                            }
-                        }
-                    ],
-                    "Properties": {}
-                },
-                {
-                    "Class": "APointLightActor",
-                    "Components": [
-                        {
-                            "Class": "USceneComponent",
-                            "Name": "DefaultSceneRoot",
-                            "Parent": "",
-                            "Properties": {
-                                "Transform": {
-                                    "Location": {
-                                        "X": 0.0,
-                                        "Y": 0.0,
-                                        "Z": 0.0
-                                    },
-                                    "Rotation": {
-                                        "Pitch": 0.0,
-                                        "Roll": 0.0,
-                                        "Yaw": 0.0
-                                    },
-                                    "Scale": {
-                                        "X": 1.0,
-                                        "Y": 1.0,
-                                        "Z": 1.0
-                                    }
-                                }
-                            }
-                        },
-                        {
-                            "Class": "UPointLightComponent",
-                            "Name": "UPointLightComponent",
-                            "Parent": "",
-                            "Properties": {
-                                "AttenuationRadius": 10.0,
-                                "Intensity": 0.20000000298023224,
-                                "LightColor": {
-                                    "A": 255,
-                                    "B": 255,
-                                    "G": 255,
-                                    "R": 255
-                                },
-                                "Transform": {
-                                    "Location": {
-                                        "X": 16.142248153686523,
-                                        "Y": 7.4948296546936035,
-                                        "Z": 8.95256519317627
-                                    },
-                                    "Rotation": {
-                                        "Pitch": 0.0,
-                                        "Roll": 0.0,
-                                        "Yaw": 0.0
-                                    },
-                                    "Scale": {
-                                        "X": 1.0,
-                                        "Y": 1.0,
-                                        "Z": 1.0
-                                    }
-                                },
-                                "bVisible": true
-                            }
-                        },
-                        {
-                            "Class": "UBillboardComponent",
-                            "Material": {
-                                "Base": "BillboardMaterial",
-                                "Instance": {
-                                    "BaseColor": {
-                                        "A": 1.0,
-                                        "B": 1.0,
-                                        "G": 1.0,
-                                        "R": 1.0
-                                    },
-                                    "BlendState": "AlphaBlend",
-                                    "Properties": {},
-                                    "SamplerState": "LinearClamp",
-                                    "Shininess": 32.0,
-                                    "SpecularColor": {
-                                        "A": 1.0,
-                                        "B": 0.5,
-                                        "G": 0.5,
-                                        "R": 0.5
-                                    },
-                                    "Textures": [
-                                        "Resources/Icons/PointLight_64x.png"
-                                    ],
-                                    "UVScrollSpeed": [
-                                        0.0,
-                                        0.0
-                                    ],
-                                    "bFlipNormalGreen": false
-                                }
-                            },
-                            "Name": "UBillboardComponent",
-                            "Parent": "UPointLightComponent",
-                            "Properties": {
-                                "Transform": {
-                                    "Location": {
-                                        "X": 0.0,
-                                        "Y": 0.0,
-                                        "Z": 0.0
-                                    },
-                                    "Rotation": {
-                                        "Pitch": 0.0,
-                                        "Roll": 0.0,
-                                        "Yaw": 0.0
-                                    },
-                                    "Scale": {
-                                        "X": 1.0,
-                                        "Y": 1.0,
-                                        "Z": 1.0
-                                    }
-                                },
-                                "bVisible": true
-                            }
-                        }
-                    ],
-                    "Properties": {}
-                },
-                {
-                    "Class": "APointLightActor",
-                    "Components": [
-                        {
-                            "Class": "USceneComponent",
-                            "Name": "DefaultSceneRoot",
-                            "Parent": "",
-                            "Properties": {
-                                "Transform": {
-                                    "Location": {
-                                        "X": 0.0,
-                                        "Y": 0.0,
-                                        "Z": 0.0
-                                    },
-                                    "Rotation": {
-                                        "Pitch": 0.0,
-                                        "Roll": 0.0,
-                                        "Yaw": 0.0
-                                    },
-                                    "Scale": {
-                                        "X": 1.0,
-                                        "Y": 1.0,
-                                        "Z": 1.0
-                                    }
-                                }
-                            }
-                        },
-                        {
-                            "Class": "UPointLightComponent",
-                            "Name": "UPointLightComponent",
-                            "Parent": "",
-                            "Properties": {
-                                "AttenuationRadius": 10.0,
-                                "Intensity": 0.20000000298023224,
-                                "LightColor": {
-                                    "A": 255,
-                                    "B": 255,
-                                    "G": 255,
-                                    "R": 255
-                                },
-                                "Transform": {
-                                    "Location": {
-                                        "X": 23.3654727935791,
-                                        "Y": -2.153764009475708,
-                                        "Z": 9.188706398010254
-                                    },
-                                    "Rotation": {
-                                        "Pitch": 0.0,
-                                        "Roll": 0.0,
-                                        "Yaw": 0.0
-                                    },
-                                    "Scale": {
-                                        "X": 1.0,
-                                        "Y": 1.0,
-                                        "Z": 1.0
-                                    }
-                                },
-                                "bVisible": true
-                            }
-                        },
-                        {
-                            "Class": "UBillboardComponent",
-                            "Material": {
-                                "Base": "BillboardMaterial",
-                                "Instance": {
-                                    "BaseColor": {
-                                        "A": 1.0,
-                                        "B": 1.0,
-                                        "G": 1.0,
-                                        "R": 1.0
-                                    },
-                                    "BlendState": "AlphaBlend",
-                                    "Properties": {},
-                                    "SamplerState": "LinearClamp",
-                                    "Shininess": 32.0,
-                                    "SpecularColor": {
-                                        "A": 1.0,
-                                        "B": 0.5,
-                                        "G": 0.5,
-                                        "R": 0.5
-                                    },
-                                    "Textures": [
-                                        "Resources/Icons/PointLight_64x.png"
-                                    ],
-                                    "UVScrollSpeed": [
-                                        0.0,
-                                        0.0
-                                    ],
-                                    "bFlipNormalGreen": false
-                                }
-                            },
-                            "Name": "UBillboardComponent",
-                            "Parent": "UPointLightComponent",
-                            "Properties": {
-                                "Transform": {
-                                    "Location": {
-                                        "X": 0.0,
-                                        "Y": 0.0,
-                                        "Z": 0.0
-                                    },
-                                    "Rotation": {
-                                        "Pitch": 0.0,
-                                        "Roll": 0.0,
-                                        "Yaw": 0.0
-                                    },
-                                    "Scale": {
-                                        "X": 1.0,
-                                        "Y": 1.0,
-                                        "Z": 1.0
-                                    }
-                                },
+                                "bCastShadow": true,
+                                "bReceiveShadow": true,
                                 "bVisible": true
                             }
                         }
@@ -326,7 +94,7 @@
                             "Name": "UAmbientLightComponent",
                             "Parent": "",
                             "Properties": {
-                                "Intensity": 0.30000001192092896,
+                                "Intensity": 0.10000000149011612,
                                 "LightColor": {
                                     "A": 255,
                                     "B": 255,
@@ -404,6 +172,8 @@
                                         "Z": 1.0
                                     }
                                 },
+                                "bCastShadow": true,
+                                "bReceiveShadow": true,
                                 "bVisible": true
                             }
                         }
@@ -422,12 +192,12 @@
                                     "Location": {
                                         "X": 0.0,
                                         "Y": 0.0,
-                                        "Z": 4.885043621063232
+                                        "Z": 0.0
                                     },
                                     "Rotation": {
-                                        "Pitch": -0.19497911632061005,
-                                        "Roll": -0.16939134895801544,
-                                        "Yaw": 0.0313987098634243
+                                        "Pitch": 0.0,
+                                        "Roll": 0.0,
+                                        "Yaw": 0.0
                                     },
                                     "Scale": {
                                         "X": 100.0,
@@ -479,7 +249,7 @@
                                     "Location": {
                                         "X": 0.0,
                                         "Y": 0.0,
-                                        "Z": 0.0
+                                        "Z": -5.913182735443115
                                     },
                                     "Rotation": {
                                         "Pitch": 0.0,
@@ -489,9 +259,11 @@
                                     "Scale": {
                                         "X": 1.0,
                                         "Y": 1.0,
-                                        "Z": 1.0
+                                        "Z": 12.833148002624512
                                     }
                                 },
+                                "bCastShadow": true,
+                                "bReceiveShadow": true,
                                 "bVisible": true
                             }
                         }
@@ -508,14 +280,14 @@
                             "Properties": {
                                 "Transform": {
                                     "Location": {
-                                        "X": 5.4019083976745605,
-                                        "Y": 2.875976324081421,
-                                        "Z": 11.747956275939941
+                                        "X": 5.423125743865967,
+                                        "Y": -10.65311336517334,
+                                        "Z": 0.5327870845794678
                                     },
                                     "Rotation": {
                                         "Pitch": 0.0,
                                         "Roll": 0.0,
-                                        "Yaw": 40.99244689941406
+                                        "Yaw": -142.21820068359375
                                     },
                                     "Scale": {
                                         "X": 1.5,
@@ -549,6 +321,8 @@
                                         "Z": 1.0
                                     }
                                 },
+                                "bCastShadow": true,
+                                "bReceiveShadow": true,
                                 "bVisible": true
                             }
                         }
@@ -587,13 +361,24 @@
                             "Name": "UDirectionalLightComponent",
                             "Parent": "",
                             "Properties": {
-                                "Intensity": 0.20000000298023224,
+                                "CascadeBlendRatio": 0.10000000149011612,
+                                "CascadeCount": 4,
+                                "CascadeDistributionExponent": 3.0,
+                                "CascadeMaxDistance": 100.0,
+                                "Intensity": 0.800000011920929,
                                 "LightColor": {
                                     "A": 255,
-                                    "B": 255,
-                                    "G": 255,
+                                    "B": 200,
+                                    "G": 200,
                                     "R": 255
                                 },
+                                "LightSourceAngle": 0.5357000231742859,
+                                "ShadowBias": 0.10000000149011612,
+                                "ShadowFilterMode": 4,
+                                "ShadowMapResolution": 2048,
+                                "ShadowMaxSlope": 2.0,
+                                "ShadowNormalOffset": 5.0,
+                                "ShadowSlopeBias": 1.0,
                                 "Transform": {
                                     "Location": {
                                         "X": 1.3992351293563843,
@@ -601,9 +386,9 @@
                                         "Z": 13.767091751098633
                                     },
                                     "Rotation": {
-                                        "Pitch": 25.00954246520996,
-                                        "Roll": -174.1251220703125,
-                                        "Yaw": -151.65907287597656
+                                        "Pitch": -7.790032386779785,
+                                        "Roll": -5.372117519378662,
+                                        "Yaw": 26.5803279876709
                                     },
                                     "Scale": {
                                         "X": 1.0,
@@ -611,6 +396,8 @@
                                         "Z": 1.0
                                     }
                                 },
+                                "bCastShadow": true,
+                                "bUseCSM": true,
                                 "bVisible": true
                             }
                         },
@@ -665,6 +452,8 @@
                                         "Z": 1.0
                                     }
                                 },
+                                "bCastShadow": true,
+                                "bReceiveShadow": true,
                                 "bVisible": true
                             }
                         },
@@ -679,7 +468,7 @@
                                     "Z": 0.0
                                 },
                                 "RotationRate": {
-                                    "Pitch": 3.0,
+                                    "Pitch": 10.0,
                                     "Roll": 0.0,
                                     "Yaw": 0.0
                                 },
