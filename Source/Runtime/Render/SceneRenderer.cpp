@@ -216,6 +216,69 @@ float DistanceSquaredToBox(const FVector& Point, const FAABB& Bounds)
     return DX * DX + DY * DY + DZ * DZ;
 }
 
+// 실제 메시만 Receiver로 센다. 에디터의 광원 Billboard는 bReceiveShadow가 켜져 있어도 그림자를 조회하지 않는다.
+bool IsShadowReceivingMesh(const FPrimitiveSceneProxy* Proxy)
+{
+    return Proxy && Proxy->IsVisible() && Proxy->ReceivesShadow() && Proxy->GetMesh();
+}
+
+// 그림자를 실제로 조회할 수 있는 Receiver가 어느 활성 View에라도 있는지 보수적으로 판정한다.
+// Light/Receiver 모두 바운드로 검사하므로 불필요한 맵을 남길 수는 있어도 필요한 맵을 지우지는 않는다.
+bool HasVisibleShadowReceiver(const FScene& Scene, const FVector& LightCenter, float LightRadius,
+    const TArray<FShadowCullingView>& Views)
+{
+    if (Views.IsEmpty()) return true;
+
+    bool bFound = false;
+    const float RadiusSquared = LightRadius * LightRadius;
+    Scene.BVH.Query(
+        [&](const FBox& Box)
+        {
+            return !bFound && DistanceSquaredToBox(LightCenter, MakeWorldBounds(Box)) <= RadiusSquared;
+        },
+        [&](FPrimitiveSceneProxy* Proxy)
+        {
+            if (bFound || !IsShadowReceivingMesh(Proxy)) return;
+            const FAABB& Bounds = Proxy->GetBounds();
+            if (DistanceSquaredToBox(LightCenter, Bounds) > RadiusSquared) return;
+            for (const FShadowCullingView& View : Views)
+            {
+                if (!IsAABBInFrustum(Bounds, View.Frustum)) continue;
+                bFound = true;
+                break;
+            }
+        });
+    return bFound;
+}
+
+// Directional은 뷰별로 그리므로 해당 뷰에 그림자를 조회할 Receiver가 없으면 맵 전체가 필요 없다.
+bool HasVisibleShadowReceiver(const FScene& Scene, const TArray<FShadowCullingView>& Views)
+{
+    if (Views.IsEmpty()) return true;
+
+    bool bFound = false;
+    Scene.BVH.Query(
+        [&](const FBox& Box)
+        {
+            if (bFound) return false;
+            const FAABB Bounds = MakeWorldBounds(Box);
+            for (const FShadowCullingView& View : Views)
+                if (IsAABBInFrustum(Bounds, View.Frustum)) return true;
+            return false;
+        },
+        [&](FPrimitiveSceneProxy* Proxy)
+        {
+            if (!IsShadowReceivingMesh(Proxy)) return;
+            for (const FShadowCullingView& View : Views)
+            {
+                if (!IsAABBInFrustum(Proxy->GetBounds(), View.Frustum)) continue;
+                bFound = true;
+                break;
+            }
+        });
+    return bFound;
+}
+
 // Caster 바운딩 구의 쉐도우 맵 상 지름(텍셀).
 float ComputeCasterTexels(const FAABB& Bounds, const FShadowCasterCullContext& Context)
 {
@@ -476,6 +539,11 @@ void FSceneRenderer::BuildShadowRequests(const FScene& Scene, FShadowFrameData& 
             if (ViewResult == ELightViewResult::OutsideView) { ++Stats.LightsCulledByView; continue; }
             if (ViewResult == ELightViewResult::TooFar) { ++Stats.LightsCulledByDistance; continue; }
             if (ViewResult == ELightViewResult::TooSmall) { ++Stats.LightsCulledByScreenSize; continue; }
+            if (!HasVisibleShadowReceiver(Scene, CullingCenter, CullingRadius, PreparingShadowViews))
+            {
+                ++Stats.LightsCulledByNoReceiver;
+                continue;
+            }
             OutData.ShadowRequestsPerLight.Add({Light});
         }
     }
@@ -870,6 +938,12 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
         if (Resolution == 0)
         {
             ++Stats.LightsCulledByScreenSize;
+            continue;
+        }
+        if (Light->GetLightType() == ELightType::Directional &&
+            !HasVisibleShadowReceiver(World.GetScene(), PreparingShadowViews))
+        {
+            ++Stats.LightsCulledByNoReceiver;
             continue;
         }
         OutData.Resolution = Resolution;

@@ -58,6 +58,7 @@ struct FShadowCullingStats
     uint32 LightsCulledByView = 0;
     uint32 LightsCulledByDistance = 0;
     uint32 LightsCulledByScreenSize = 0;
+    uint32 LightsCulledByNoReceiver = 0;
     uint32 LightsCulledByNoCaster = 0;
     uint32 LightsRendered = 0;
 
