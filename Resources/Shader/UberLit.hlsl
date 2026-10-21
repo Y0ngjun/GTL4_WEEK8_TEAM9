@@ -167,7 +167,7 @@ struct FShadowInfo
     float PenumbraScale;  // PCSS 반영 폭 계수. 결과는 Map 한 장 기준 로컬 UV (C++ FShadowInfo 주석 참고)
     float4 AtlasUVScaleBias;
     float PCSSNearDepth;  // Spot/Point 차폐물 탐색용 정규화 Near 깊이
-    uint bUsePCSS;        // Light의 bUsePCSS. 1이면 PCSS, 0이면 기본 조회
+    uint ShadowFilterMode; // Light의 ShadowFilterMode (SHADOW_FILTER_* 참고)
     float2 PCSSPadding;
 };
 cbuffer DirectionalShadowConstants : register(b5)
@@ -272,14 +272,12 @@ float GetShadowMapTexelUV(FShadowInfo Info)
 // 모든 오프셋은 Map 한 장 기준 로컬 UV이고, 아틀라스 조회는 위의 두 함수가 타일 안으로 제한한다.
 // ---------------------------------------------------------------------------------
 
-// PCSS 코드를 셰이더에 넣을지 정하는 컴파일 스위치. 1이면 Light마다 bUsePCSS로 실행 중에 켜고 끈다.
-// 0이면 PCSS 코드가 빠지고 항상 기본 조회(Directional: 2x2 PCF, Spot/Point: 단일 비교)를 쓴다.
-#ifndef DIRECTIONAL_SHADOW_PCSS
-#define DIRECTIONAL_SHADOW_PCSS 1
-#endif
-#ifndef LOCAL_SHADOW_PCSS
-#define LOCAL_SHADOW_PCSS 1
-#endif
+// Light의 ShadowFilterMode 값. C++ ULightComponent::ShadowFilterMode와 같은 순서다.
+#define SHADOW_FILTER_PCF2X2_HARDWARE   0u
+#define SHADOW_FILTER_PCF3X3_POINT      1u
+#define SHADOW_FILTER_PCF5X5_POINT      2u
+#define SHADOW_FILTER_PCF5X5_COMPARISON 3u
+#define SHADOW_FILTER_PCSS              4u
 
 // 커널 최대 반경은 탐색 반경보다 작게 유지한다.
 #define PCSS_BLOCKER_SAMPLES   16
@@ -363,6 +361,58 @@ float FilterShadowPCSS(FShadowInfo Info, float2 UV, float ReceiverDepth, float C
     return Lit / (float)PCSS_PCF_SAMPLES;
 }
 
+// 수동 PCF. point 샘플러로 텍셀 깊이를 그대로 읽어 셰이더가 직접 비교(0/1)하고 단순 평균한다.
+// 탭은 1텍셀 간격 격자다. Radius 1 = 3x3, 2 = 5x5. 탭마다 텍셀 하나만 보므로 결과가 1/탭 수 단위 계단으로 바뀐다.
+float FilterShadowPointGrid(FShadowInfo Info, float2 UV, float CompareDepth, int Radius)
+{
+    float TexelUV = GetShadowMapTexelUV(Info);
+    float Lit = 0.0f;
+    for (int y = -Radius; y <= Radius; ++y)
+    {
+        for (int x = -Radius; x <= Radius; ++x)
+        {
+            float SampleDepth = SampleShadowAtlasDepth(Info, UV + float2(x, y) * TexelUV);
+            Lit += CompareDepth <= SampleDepth ? 1.0f : 0.0f;
+        }
+    }
+    float Side = (float)(2 * Radius + 1);
+    return Lit / (Side * Side);
+}
+
+// 하드웨어 PCF 격자. 탭마다 비교 샘플러가 2x2 비교 + bilinear를 하고 단순 평균한다.
+// 탭은 1텍셀 간격이라 서로 겹친다. Radius 2 = 5x5 탭 (텍셀 6x6 영역).
+float FilterShadowComparisonGrid(FShadowInfo Info, float2 UV, float CompareDepth, int Radius)
+{
+    float TexelUV = GetShadowMapTexelUV(Info);
+    float Lit = 0.0f;
+    for (int y = -Radius; y <= Radius; ++y)
+    {
+        for (int x = -Radius; x <= Radius; ++x)
+            Lit += SampleShadowAtlasCompare(Info, UV + float2(x, y) * TexelUV, CompareDepth);
+    }
+    float Side = (float)(2 * Radius + 1);
+    return Lit / (Side * Side);
+}
+
+// 모든 Light가 조회 위치(UV)와 비교 깊이를 구한 뒤 이 함수로 필터링한다. 모드는 Light마다 같으므로 분기가 픽셀 사이에서 거의 갈리지 않는다.
+// bLocal: PCSS 반경 공식 선택 (Directional = false, Spot/Point = true).
+float FilterShadowByMode(FShadowInfo Info, float2 UV, float ReceiverDepth, float CompareDepth, float3 WorldPosition, bool bLocal)
+{
+    uint Mode = Info.ShadowFilterMode;
+    float Shadow = 1.0f;
+    [branch] if (Mode == SHADOW_FILTER_PCSS)
+        Shadow = FilterShadowPCSS(Info, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), bLocal);
+    else if (Mode == SHADOW_FILTER_PCF5X5_COMPARISON)
+        Shadow = FilterShadowComparisonGrid(Info, UV, CompareDepth, 2);
+    else if (Mode == SHADOW_FILTER_PCF5X5_POINT)
+        Shadow = FilterShadowPointGrid(Info, UV, CompareDepth, 2);
+    else if (Mode == SHADOW_FILTER_PCF3X3_POINT)
+        Shadow = FilterShadowPointGrid(Info, UV, CompareDepth, 1);
+    else
+        Shadow = SampleShadowAtlasCompare(Info, UV, CompareDepth);
+    return Shadow;
+}
+
 uint SelectPointShadowFace(float3 Direction)
 {
     float3 AbsDirection = abs(Direction);
@@ -392,8 +442,8 @@ float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNo
     return SampleShadowAtlasCompare(Info, UV, Ndc.z - Bias);
 }
 
-// Directional PCSS. 직교 투영이라 NDC.z 차이가 월드 거리에 비례하므로 그대로 쓴다. Cascade마다 PenumbraScale이 다르다.
-float SampleDirectionalShadowPCSS(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
+// Directional 조회 + Light의 필터 모드. 직교 투영이라 NDC.z 차이가 월드 거리에 비례하므로 그대로 쓴다. Cascade마다 PenumbraScale이 다르다.
+float SampleDirectionalShadowFiltered(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
 {
     FShadowInfo Info = DirectionalShadowInfos[InfoIndex];
     float3 N = normalize(GeoNormal);
@@ -405,27 +455,7 @@ float SampleDirectionalShadowPCSS(uint InfoIndex, float3 WorldPosition, float3 G
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = Ndc.z - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return FilterShadowPCSS(Info, UV, Ndc.z, CompareDepth, GetPCSSRotation(WorldPosition), false);
-}
-
-// Light의 bUsePCSS로 실행 중에 고른다. DIRECTIONAL_SHADOW_PCSS가 0이면 PCSS 코드 자체를 빼서 항상 기본 조회를 쓴다.
-float SampleDirectionalShadowFiltered(uint InfoIndex, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
-{
-#if DIRECTIONAL_SHADOW_PCSS
-    [branch] if (DirectionalShadowInfos[InfoIndex].bUsePCSS != 0u)
-        return SampleDirectionalShadowPCSS(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
-#endif
-    return SampleDirectionalShadow(InfoIndex, WorldPosition, GeoNormal, ToLightDirection);
-}
-
-// Spot/Point용. 유효한 번호일 때만 Light의 bUsePCSS를 읽는다.
-bool LocalShadowUsesPCSS(uint ShadowIndex)
-{
-#if LOCAL_SHADOW_PCSS
-    return ShadowIndex < NumShadowInfos && ShadowInfos[ShadowIndex].bUsePCSS != 0u;
-#else
-    return false;
-#endif
+    return FilterShadowByMode(Info, UV, Ndc.z, CompareDepth, WorldPosition, false);
 }
 
 float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
@@ -510,8 +540,8 @@ float ComputePointShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosit
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
 
-// Spot PCSS. 조회 위치와 깊이는 ComputeSpotShadow와 같고, 비교만 FilterShadowPCSS로 바꾼다.
-float ComputeSpotShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
+// Spot 조회 + Light의 필터 모드. 조회 위치와 깊이는 ComputeSpotShadow와 같다.
+float ComputeSpotShadowFiltered(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
 {
     if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
     FShadowInfo Info = ShadowInfos[ShadowIndex];
@@ -529,12 +559,12 @@ float ComputeSpotShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPo
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return FilterShadowPCSS(Info, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), true);
+    return FilterShadowByMode(Info, UV, ReceiverDepth, CompareDepth, WorldPosition, true);
 }
 
-// Point PCSS. 면 선택과 면별 UV는 ComputePointShadow와 같다. 각 면은 90도 원근 Map이라 Spot과 같은 식을 쓴다.
+// Point 조회 + Light의 필터 모드. 면 선택과 면별 UV는 ComputePointShadow와 같다. 각 면은 90도 원근 Map이라 Spot과 같은 식을 쓴다.
 // 커널이 면 경계를 넘는 샘플은 그 면의 타일 가장자리로 제한된다(옆 면으로 이어 읽지 않음).
-float ComputePointShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
+float ComputePointShadowFiltered(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal)
 {
     if (!CanSampleShadow(ShadowIndex, ReceiveShadow)) return 1.0f;
     FShadowInfo Info = ShadowInfos[ShadowIndex];
@@ -557,7 +587,7 @@ float ComputePointShadowPCSS(uint ShadowIndex, uint ReceiveShadow, float3 WorldP
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return FilterShadowPCSS(FaceInfo, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), true);
+    return FilterShadowByMode(FaceInfo, UV, ReceiverDepth, CompareDepth, WorldPosition, true);
 }
 
 Texture2D AlbedoTexture : register(t0);
@@ -700,7 +730,7 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
         float Shadow = 1.0f;
         [branch] if (dot(N, L) > 0.0f)
         {
-            // Cascade 선택·혼합 안에서 DIRECTIONAL_SHADOW_PCSS에 따라 PCSS/PCF를 고른다.
+            // Cascade 선택·혼합 안에서 Light의 ShadowFilterMode로 필터를 고른다.
             Shadow = ComputeDirectionalShadow(DirectionalLight.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal, L);
         }
         AccumulateLight(Il * GeoFactor * Shadow, N, L, V, n, DiffuseLight, SpecularLight);
@@ -744,10 +774,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             float Shadow = 1.0f;
             [branch] if (dot(N, L) > 0.0f)
             {
-                [branch] if (LocalShadowUsesPCSS(Light.ShadowIndex))
-                    Shadow = ComputePointShadowPCSS(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
-                else
-                    Shadow = ComputePointShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+                // Light의 ShadowFilterMode로 필터를 고른다.
+                Shadow = ComputePointShadowFiltered(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             }
             float3 Il = Light.Color * DistanceAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);
@@ -783,10 +811,8 @@ void ComputePixelLighting(float3 N, float3 GeoNormal, float3 WorldPosition, floa
             float Shadow = 1.0f;
             [branch] if (SpotAttenuation > 0.0f && dot(N, L) > 0.0f)
             {
-                [branch] if (LocalShadowUsesPCSS(Light.ShadowIndex))
-                    Shadow = ComputeSpotShadowPCSS(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
-                else
-                    Shadow = ComputeSpotShadow(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
+                // Light의 ShadowFilterMode로 필터를 고른다.
+                Shadow = ComputeSpotShadowFiltered(Light.ShadowIndex, ReceiveShadow, WorldPosition, GeoNormal);
             }
             float3 Il = Light.Color * DistanceAttenuation * SpotAttenuation * GeoFactor * Shadow;
             AccumulateLight(Il, N, L, V, n, DiffuseLight, SpecularLight);

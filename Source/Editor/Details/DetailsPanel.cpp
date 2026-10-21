@@ -732,6 +732,17 @@ namespace
 					bChanged = true;
 				}
 			}
+			else if (Property.Name == "ShadowFilterMode" && Cast<ULightComponent>(Object))
+			{
+				// ULightComponent::ShadowFilterMode와 셰이더 SHADOW_FILTER_*의 순서와 같다.
+				const char* Items[] = { "PCF 2x2 (Hardware)", "PCF 3x3 (Point)", "PCF 5x5 (Point)", "PCF 5x5 (Comparison)", "PCSS" };
+				int Selected = static_cast<int>(Cast<ULightComponent>(Object)->GetShadowFilterMode());
+				if (ImGui::Combo(Label.c_str(), &Selected, Items, IM_ARRAYSIZE(Items)))
+				{
+					*static_cast<int*>(ValuePtr) = Selected;
+					bChanged = true;
+				}
+			}
 			else
 				bChanged = ImGui::DragInt(Label.c_str(), static_cast<int*>(ValuePtr), 1.0f);
 			break;
