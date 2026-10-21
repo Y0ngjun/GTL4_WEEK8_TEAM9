@@ -68,7 +68,7 @@ struct FShadowCascadeSplit
 };
 
 
-// World별 Atlas를 공유하고, Directional CPU 자료는 View별로 준비한다.
+// Spot/Point는 World별 Atlas, Directional은 View별 독립 Atlas에 대응한다.
 struct FShadowFrameData
 {
     // 이번 프레임에서 그림자 계산을 할 Light 목록

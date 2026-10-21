@@ -34,7 +34,8 @@ namespace
     namespace ShadowSRVSlots
     {
         constexpr uint32 Infos = 12;
-        constexpr uint32 Atlas = 13;
+        constexpr uint32 LocalAtlas = 13;
+        constexpr uint32 DirectionalAtlas = 14;
         constexpr uint32 DirectionalInfos = 15;
     }
     constexpr uint32 ShadowSamplerSlot = 1;
@@ -747,7 +748,7 @@ bool FRenderer::DrawShadowDepth(const FShadowRequestPerLight& Request, const FSh
     RenderCommand::Unmap(ShadowDepthPassCB.get());
 
     // 그림자 입력 슬롯을 비워 SRV/DSV 동시 바인딩을 피한다.
-    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Atlas, ShadowSRVSlots::DirectionalInfos})
+    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::LocalAtlas, ShadowSRVSlots::DirectionalAtlas, ShadowSRVSlots::DirectionalInfos})
         RenderCommand::BindShaderResource(Slot, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
     FRenderingInfo RenderingInfo{};
     RenderingInfo.ViewportSetting.StartX = Rect.X;
@@ -811,7 +812,7 @@ void FRenderer::ReleaseShadowResources(uint32 Index)
 {
     if (Index >= MaxShadowResourceSlots) return;
     // Context 정리 시 아직 바인딩된 뷰가 자원의 수명을 붙잡지 않게 한다.
-    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Atlas, ShadowSRVSlots::DirectionalInfos})
+    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::LocalAtlas, ShadowSRVSlots::DirectionalAtlas, ShadowSRVSlots::DirectionalInfos})
         RenderCommand::BindShaderResource(Slot, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
     WorldShadowResources[Index].reset();
 }
@@ -866,7 +867,7 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
             Rect.X > Frame.ShadowAtlasSize - Rect.Size || Rect.Y > Frame.ShadowAtlasSize - Rect.Size) return Fail();
     }
 
-    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::Atlas, ShadowSRVSlots::DirectionalInfos})
+    for (uint32 Slot : {ShadowSRVSlots::Infos, ShadowSRVSlots::LocalAtlas, ShadowSRVSlots::DirectionalAtlas, ShadowSRVSlots::DirectionalInfos})
         RenderCommand::BindShaderResource(Slot, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
     if (!Resources.EnsureAtlasCapacity(Frame.ShadowAtlasSize)) return Fail();
 
@@ -897,12 +898,11 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
     return &Frame;
 }
 
-bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame, uint32 ResourceIndex)
+bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSceneRenderer& SceneRenderer, const FSceneView& View, FShadowFrameData& Frame)
 {
     FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     Resources.ResetFrame();
     Frame.ResetFrame();
-    if (ResourceIndex >= MaxShadowResourceSlots || !WorldShadowResources[ResourceIndex]) return false;
     const uint64 FrameNumber = SceneRenderer.GetFrameNumber();
     SceneRenderer.PrepareShadows(World, Frame, {ELightType::Directional}, &View);
     Resources.CullingStats = Frame.CullingStats;
@@ -915,15 +915,13 @@ bool FRenderer::RenderDirectionalShadow(FViewport& Viewport, UWorld& World, FSce
 
     Resources.RenderedFrame = FrameNumber;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Pixel);
-    if (!SceneRenderer.AllocateShadowMaps(Frame, ResourceIndex))
+    if (!SceneRenderer.AllocateDirectionalShadowMaps(Frame))
     {
         Resources.CullingStats = Frame.CullingStats;
         return false;
     }
-    FShadowResources& WorldResources = *WorldShadowResources[ResourceIndex];
-    RenderCommand::BindShaderResource(ShadowSRVSlots::Atlas, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
-    if (!WorldResources.EnsureAtlasCapacity(Frame.ShadowAtlasSize)) return false;
-    Resources.DepthAtlas = WorldResources.DepthAtlas;
+    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalAtlas, static_cast<ID3D11ShaderResourceView*>(nullptr), EShaderBindFlagBits::Vertex | EShaderBindFlagBits::Pixel);
+    if (!Resources.EnsureAtlasCapacity(Frame.ShadowAtlasSize)) return false;
 
     FShaderProgram* Shader = bUseCSM ? ShadowNearClampShader : DepthShader;
     for (uint32 Index = 0; Index < PassCount; ++Index)
@@ -965,7 +963,7 @@ bool FRenderer::BindWorldShadows(uint32 Index, uint64 FrameNumber, bool bSupport
     const FShadowResources* Resources = GetShadowResources(Index);
     const bool bReady = bSupported && Resources && Resources->RenderedFrame == FrameNumber && Resources->bReadyForShading;
     RenderCommand::BindShaderResource(ShadowSRVSlots::Infos, bReady ? Resources->ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
-    RenderCommand::BindShaderResource(ShadowSRVSlots::Atlas, bReady && Resources->DepthAtlas ? Resources->DepthAtlas->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::LocalAtlas, bReady && Resources->DepthAtlas ? Resources->DepthAtlas->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowComparisonSamplerSlot, ESamplerState::ShadowComparison, EShaderBindFlagBits::Pixel);
     return bReady;
@@ -976,8 +974,7 @@ bool FRenderer::BindDirectionalShadow(const FViewport& Viewport, uint64 FrameNum
     const FDirectionalShadowResources& Resources = Viewport.GetDirectionalShadow();
     const bool bReady = bSupported && Resources.RenderedFrame == FrameNumber && Resources.bReadyForShading;
     RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalInfos, bReady ? Resources.ShadowInfoSRV.Get() : nullptr, EShaderBindFlagBits::Pixel);
-    if (bReady)
-        RenderCommand::BindShaderResource(ShadowSRVSlots::Atlas, Resources.DepthAtlas->GetSRV(), EShaderBindFlagBits::Pixel);
+    RenderCommand::BindShaderResource(ShadowSRVSlots::DirectionalAtlas, bReady && Resources.DepthAtlas ? Resources.DepthAtlas->GetSRV() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindConstantBuffer(DirectionalShadowCBSlot, bReady ? Resources.SelectionCB.get() : nullptr, EShaderBindFlagBits::Pixel);
     RenderCommand::BindSamplerState(ShadowSamplerSlot, ESamplerState::PointClamp, EShaderBindFlagBits::Pixel);
     return bReady;

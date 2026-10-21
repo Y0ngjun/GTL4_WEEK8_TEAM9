@@ -71,7 +71,8 @@ public:
     void PrepareShadows(UWorld& World, FShadowFrameData& OutData, std::initializer_list<ELightType> LightTypes, const FSceneView* View = nullptr);
     const FShadowFrameData& GetWorldShadowFrame(uint32 ResourceIndex) const { return WorldShadowFrames[ResourceIndex].Data; }
     void ReleaseWorldShadows(uint32 ResourceIndex);
-    bool AllocateShadowMaps(FShadowFrameData& Frame, uint32 ResourceIndex);
+    // Viewport의 독립 Atlas에 배치한다. World의 Spot/Point 할당 및 캐시와 무관하다.
+    bool AllocateDirectionalShadowMaps(FShadowFrameData& Frame);
     // GPU 쉐도우 맵 내용을 믿을 수 없을 때(렌더 실패 등) 호출한다. 다음 준비에서 모든 면을 다시 그린다.
     void InvalidateShadowCache(uint32 ResourceIndex);
     // 마지막으로 준비한 컬링 결과. 준비한 적 없으면 nullptr.
@@ -114,8 +115,6 @@ private:
         uint64 PreparedFrame = 0;
         TMap<uint32, FShadowCacheEntry> CacheEntries;
         FShadowAtlasAllocator AtlasAllocator;
-        // Directional은 캐싱하지 않으므로 이 프레임 동안만 영역을 유지한다.
-        TArray<FShadowAtlasRect> DirectionalAllocations;
         // 이 값들이 바뀌면 캐시 전체가 무효다.
         bool bCacheActive = false;
         uint32 CachedResolution = 0;

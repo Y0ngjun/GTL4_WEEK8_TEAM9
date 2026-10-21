@@ -27,7 +27,7 @@ public:
 
 	bool CastsShadow() const { return bCastShadow; }
 	void SetCastShadow(bool bValue) { bCastShadow = bValue; MarkSceneProxyDirty(); }
-	uint32 GetShadowMapResolution() const
+	virtual uint32 GetShadowMapResolution() const
 	{
 		const uint32 Value = static_cast<uint32>(ShadowMapResolution);
 		return Value >= 256 && Value <= 2048 && (Value & (Value - 1)) == 0 ? Value : 1024u;

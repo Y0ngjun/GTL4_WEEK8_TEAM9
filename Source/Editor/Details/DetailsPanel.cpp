@@ -4,6 +4,7 @@
 #include "Render/ShadowResources.h"
 #include "Render/RenderCommand.h"
 #include "Component/LightComponent.h"
+#include "Component/DirectionalLightComponent.h"
 #include <d3dcompiler.h>
 #include "imgui_internal.h"
 #include "Editor/HitoriEd/EditorDragDrop.h"
@@ -718,6 +719,17 @@ namespace
 			break;
 		case EPropertyType::Int:
 		{
+			const auto* Directional = Cast<UDirectionalLightComponent>(Object);
+			if (Directional && Property.Name == "CascadeCount")
+			{
+				ImGui::Text("%u (CSM)", ShadowCascadeCount);
+				break;
+			}
+			if (Directional && Directional->UsesCSM() && Property.Name == "ShadowMapResolution")
+			{
+				ImGui::Text("%u (CSM)", ShadowCascadeResolution);
+				break;
+			}
 			ULightComponent* Light = Property.Name == "ShadowMapResolution" ? Cast<ULightComponent>(Object) : nullptr;
 			if (Light)
 			{

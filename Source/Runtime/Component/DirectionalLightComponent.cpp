@@ -27,7 +27,7 @@ FLightSceneProxy* UDirectionalLightComponent::CreateSceneProxy()
 FShadowCascadeSettings UDirectionalLightComponent::GetCascadeSettings() const
 {
     FShadowCascadeSettings Settings;
-    Settings.Count = static_cast<uint32>(FMath::Clamp(CascadeCount, 1, static_cast<int32>(MaxShadowCascades)));
+    Settings.Count = ShadowCascadeCount;
     Settings.MaxDistance = std::isfinite(CascadeMaxDistance) ? std::max(0.0f, CascadeMaxDistance) : 100.0f;
     Settings.DistributionExponent = std::isfinite(CascadeDistributionExponent) ? FMath::Clamp(CascadeDistributionExponent, 1.0f, 10.0f) : 3.0f;
     Settings.BlendRatio = std::isfinite(CascadeBlendRatio) ? FMath::Clamp(CascadeBlendRatio, 0.0f, 0.5f) : 0.1f;

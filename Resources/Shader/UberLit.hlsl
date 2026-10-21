@@ -182,7 +182,8 @@ cbuffer DirectionalShadowConstants : register(b5)
     float4 CascadeDepthRanges[8]; // xy=선택 near/far, z=혼합 폭, w=padding
 };
 StructuredBuffer<FShadowInfo> ShadowInfos : register(t12);
-Texture2D<float> ShadowAtlas : register(t13);
+Texture2D<float> LocalShadowAtlas : register(t13);
+Texture2D<float> DirectionalShadowAtlas : register(t14);
 StructuredBuffer<FShadowInfo> DirectionalShadowInfos : register(t15);
 SamplerState ShadowSampler : register(s1);
 
@@ -232,38 +233,39 @@ uint SelectDirectionalShadowInfo(uint ShadowIndex, float3 WorldPosition)
     return 0xffffffffu;
 }
 
-float SampleShadowAtlasDepth(FShadowInfo Info, float2 LocalUV)
+// 호출자가 Atlas를 명시하여 Directional과 Spot/Point의 조회 대상을 분리한다.
+float SampleShadowAtlasDepth(Texture2D<float> Atlas, FShadowInfo Info, float2 LocalUV)
 {
     uint Width, Height;
-    ShadowAtlas.GetDimensions(Width, Height);
+    Atlas.GetDimensions(Width, Height);
     float2 HalfTexel = 0.5f / float2(Width, Height);
     float2 Scale = Info.AtlasUVScaleBias.xy;
     float2 Offset = Info.AtlasUVScaleBias.zw;
     // 다른 타일을 읽지 않도록 유효 Texel 중심으로 제한한다.
     float2 UV = clamp(LocalUV * Scale + Offset,
         Offset + HalfTexel, Offset + Scale - HalfTexel);
-    return ShadowAtlas.SampleLevel(ShadowSampler, UV, 0);
+    return Atlas.SampleLevel(ShadowSampler, UV, 0);
 }
 
 // SampleShadowAtlasDepth와 같은 타일 제한으로 비교 샘플러(2x2 비교 + bilinear)를 쓴다.
 // 유효 Texel 중심 안쪽으로 제한하면 2x2의 바깥 텍셀 가중치가 0이 되어 옆 타일이 섞이지 않는다.
-float SampleShadowAtlasCompare(FShadowInfo Info, float2 LocalUV, float CompareDepth)
+float SampleShadowAtlasCompare(Texture2D<float> Atlas, FShadowInfo Info, float2 LocalUV, float CompareDepth)
 {
     uint Width, Height;
-    ShadowAtlas.GetDimensions(Width, Height);
+    Atlas.GetDimensions(Width, Height);
     float2 HalfTexel = 0.5f / float2(Width, Height);
     float2 Scale = Info.AtlasUVScaleBias.xy;
     float2 Offset = Info.AtlasUVScaleBias.zw;
     float2 UV = clamp(LocalUV * Scale + Offset,
         Offset + HalfTexel, Offset + Scale - HalfTexel);
-    return ShadowAtlas.SampleCmpLevelZero(ShadowComparisonSampler, UV, CompareDepth);
+    return Atlas.SampleCmpLevelZero(ShadowComparisonSampler, UV, CompareDepth);
 }
 
 // Map 한 장(아틀라스 타일) 기준 로컬 UV에서 1텍셀의 크기.
-float GetShadowMapTexelUV(FShadowInfo Info)
+float GetShadowMapTexelUV(Texture2D<float> Atlas, FShadowInfo Info)
 {
     uint Width, Height;
-    ShadowAtlas.GetDimensions(Width, Height);
+    Atlas.GetDimensions(Width, Height);
     return 1.0f / max((float)Width * Info.AtlasUVScaleBias.x, 1.0f);
 }
 
@@ -321,9 +323,9 @@ float ComputeLocalPCSSRadius(FShadowInfo Info, float ReceiverDepth, float Blocke
 
 // 한 Map(타일)에서 차폐물 탐색 → 커널 반경 → PCF. bLocal은 반경 공식을 고른다.
 // Directional(false): 반경 = (zR - zB) * PenumbraScale, Spot/Point(true): ComputeLocalPCSSRadius.
-float FilterShadowPCSS(FShadowInfo Info, float2 UV, float ReceiverDepth, float CompareDepth, float2 CosSin, bool bLocal)
+float FilterShadowPCSS(Texture2D<float> Atlas, FShadowInfo Info, float2 UV, float ReceiverDepth, float CompareDepth, float2 CosSin, bool bLocal)
 {
-    float TexelUV = GetShadowMapTexelUV(Info);
+    float TexelUV = GetShadowMapTexelUV(Atlas, Info);
 
     // 1) 차폐물 탐색: depth 값 자체가 필요하므로 point 샘플러로 읽는다.
     // 가장 먼 차폐물 기준 최대 반경. Directional은 near(깊이 0), Spot/Point는 PCSSNearDepth.
@@ -335,7 +337,7 @@ float FilterShadowPCSS(FShadowInfo Info, float2 UV, float ReceiverDepth, float C
     for (uint i = 0; i < PCSS_BLOCKER_SAMPLES; ++i)
     {
         float2 Offset = RotatePCSSSample(PCSSPoissonDisk[i], CosSin) * SearchUV;
-        float SampleDepth = SampleShadowAtlasDepth(Info, UV + Offset);
+        float SampleDepth = SampleShadowAtlasDepth(Atlas, Info, UV + Offset);
         if (SampleDepth < CompareDepth)
         {
             BlockerSum += SampleDepth;
@@ -356,22 +358,22 @@ float FilterShadowPCSS(FShadowInfo Info, float2 UV, float ReceiverDepth, float C
     for (uint j = 0; j < PCSS_PCF_SAMPLES; ++j)
     {
         float2 Offset = RotatePCSSSample(PCSSPoissonDisk[j], CosSin) * KernelUV;
-        Lit += SampleShadowAtlasCompare(Info, UV + Offset, CompareDepth);
+        Lit += SampleShadowAtlasCompare(Atlas, Info, UV + Offset, CompareDepth);
     }
     return Lit / (float)PCSS_PCF_SAMPLES;
 }
 
 // 수동 PCF. point 샘플러로 텍셀 깊이를 그대로 읽어 셰이더가 직접 비교(0/1)하고 단순 평균한다.
 // 탭은 1텍셀 간격 격자다. Radius 1 = 3x3, 2 = 5x5. 탭마다 텍셀 하나만 보므로 결과가 1/탭 수 단위 계단으로 바뀐다.
-float FilterShadowPointGrid(FShadowInfo Info, float2 UV, float CompareDepth, int Radius)
+float FilterShadowPointGrid(Texture2D<float> Atlas, FShadowInfo Info, float2 UV, float CompareDepth, int Radius)
 {
-    float TexelUV = GetShadowMapTexelUV(Info);
+    float TexelUV = GetShadowMapTexelUV(Atlas, Info);
     float Lit = 0.0f;
     for (int y = -Radius; y <= Radius; ++y)
     {
         for (int x = -Radius; x <= Radius; ++x)
         {
-            float SampleDepth = SampleShadowAtlasDepth(Info, UV + float2(x, y) * TexelUV);
+            float SampleDepth = SampleShadowAtlasDepth(Atlas, Info, UV + float2(x, y) * TexelUV);
             Lit += CompareDepth <= SampleDepth ? 1.0f : 0.0f;
         }
     }
@@ -381,14 +383,14 @@ float FilterShadowPointGrid(FShadowInfo Info, float2 UV, float CompareDepth, int
 
 // 하드웨어 PCF 격자. 탭마다 비교 샘플러가 2x2 비교 + bilinear를 하고 단순 평균한다.
 // 탭은 1텍셀 간격이라 서로 겹친다. Radius 2 = 5x5 탭 (텍셀 6x6 영역).
-float FilterShadowComparisonGrid(FShadowInfo Info, float2 UV, float CompareDepth, int Radius)
+float FilterShadowComparisonGrid(Texture2D<float> Atlas, FShadowInfo Info, float2 UV, float CompareDepth, int Radius)
 {
-    float TexelUV = GetShadowMapTexelUV(Info);
+    float TexelUV = GetShadowMapTexelUV(Atlas, Info);
     float Lit = 0.0f;
     for (int y = -Radius; y <= Radius; ++y)
     {
         for (int x = -Radius; x <= Radius; ++x)
-            Lit += SampleShadowAtlasCompare(Info, UV + float2(x, y) * TexelUV, CompareDepth);
+            Lit += SampleShadowAtlasCompare(Atlas, Info, UV + float2(x, y) * TexelUV, CompareDepth);
     }
     float Side = (float)(2 * Radius + 1);
     return Lit / (Side * Side);
@@ -396,20 +398,20 @@ float FilterShadowComparisonGrid(FShadowInfo Info, float2 UV, float CompareDepth
 
 // 모든 Light가 조회 위치(UV)와 비교 깊이를 구한 뒤 이 함수로 필터링한다. 모드는 Light마다 같으므로 분기가 픽셀 사이에서 거의 갈리지 않는다.
 // bLocal: PCSS 반경 공식 선택 (Directional = false, Spot/Point = true).
-float FilterShadowByMode(FShadowInfo Info, float2 UV, float ReceiverDepth, float CompareDepth, float3 WorldPosition, bool bLocal)
+float FilterShadowByMode(Texture2D<float> Atlas, FShadowInfo Info, float2 UV, float ReceiverDepth, float CompareDepth, float3 WorldPosition, bool bLocal)
 {
     uint Mode = Info.ShadowFilterMode;
     float Shadow = 1.0f;
     [branch] if (Mode == SHADOW_FILTER_PCSS)
-        Shadow = FilterShadowPCSS(Info, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), bLocal);
+        Shadow = FilterShadowPCSS(Atlas, Info, UV, ReceiverDepth, CompareDepth, GetPCSSRotation(WorldPosition), bLocal);
     else if (Mode == SHADOW_FILTER_PCF5X5_COMPARISON)
-        Shadow = FilterShadowComparisonGrid(Info, UV, CompareDepth, 2);
+        Shadow = FilterShadowComparisonGrid(Atlas, Info, UV, CompareDepth, 2);
     else if (Mode == SHADOW_FILTER_PCF5X5_POINT)
-        Shadow = FilterShadowPointGrid(Info, UV, CompareDepth, 2);
+        Shadow = FilterShadowPointGrid(Atlas, Info, UV, CompareDepth, 2);
     else if (Mode == SHADOW_FILTER_PCF3X3_POINT)
-        Shadow = FilterShadowPointGrid(Info, UV, CompareDepth, 1);
+        Shadow = FilterShadowPointGrid(Atlas, Info, UV, CompareDepth, 1);
     else
-        Shadow = SampleShadowAtlasCompare(Info, UV, CompareDepth);
+        Shadow = SampleShadowAtlasCompare(Atlas, Info, UV, CompareDepth);
     return Shadow;
 }
 
@@ -439,7 +441,7 @@ float SampleDirectionalShadow(uint InfoIndex, float3 WorldPosition, float3 GeoNo
 
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return SampleShadowAtlasCompare(Info, UV, Ndc.z - Bias);
+    return SampleShadowAtlasCompare(DirectionalShadowAtlas, Info, UV, Ndc.z - Bias);
 }
 
 // Directional 조회 + Light의 필터 모드. 직교 투영이라 NDC.z 차이가 월드 거리에 비례하므로 그대로 쓴다. Cascade마다 PenumbraScale이 다르다.
@@ -455,7 +457,7 @@ float SampleDirectionalShadowFiltered(uint InfoIndex, float3 WorldPosition, floa
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = Ndc.z - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return FilterShadowByMode(Info, UV, Ndc.z, CompareDepth, WorldPosition, false);
+    return FilterShadowByMode(DirectionalShadowAtlas, Info, UV, Ndc.z, CompareDepth, WorldPosition, false);
 }
 
 float ComputeDirectionalShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosition, float3 GeoNormal, float3 ToLightDirection)
@@ -507,7 +509,7 @@ float ComputeSpotShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPositi
     // 범위는 Bias 적용 전에 검사한다. Near 밖/반경 밖의 점은 그림자를 조회하지 않는다.
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = SampleShadowAtlasDepth(Info, UV);
+    float StoredDepth = SampleShadowAtlasDepth(LocalShadowAtlas, Info, UV);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
@@ -535,7 +537,7 @@ float ComputePointShadow(uint ShadowIndex, uint ReceiveShadow, float3 WorldPosit
     float3 Ndc = Clip.xyz / Clip.w;
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
-    float StoredDepth = SampleShadowAtlasDepth(FaceInfo, UV);
+    float StoredDepth = SampleShadowAtlasDepth(LocalShadowAtlas, FaceInfo, UV);
     float Bias = ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
     return ReceiverDepth - Bias <= StoredDepth ? 1.0f : 0.0f;
 }
@@ -559,7 +561,7 @@ float ComputeSpotShadowFiltered(uint ShadowIndex, uint ReceiveShadow, float3 Wor
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f || ReceiverDepth >= 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return FilterShadowByMode(Info, UV, ReceiverDepth, CompareDepth, WorldPosition, true);
+    return FilterShadowByMode(LocalShadowAtlas, Info, UV, ReceiverDepth, CompareDepth, WorldPosition, true);
 }
 
 // Point 조회 + Light의 필터 모드. 면 선택과 면별 UV는 ComputePointShadow와 같다. 각 면은 90도 원근 Map이라 Spot과 같은 식을 쓴다.
@@ -587,7 +589,7 @@ float ComputePointShadowFiltered(uint ShadowIndex, uint ReceiveShadow, float3 Wo
     if (any(abs(Ndc.xy) > 1.0f) || Ndc.z < 0.0f || Ndc.z > 1.0f) return 1.0f;
     float2 UV = float2(Ndc.x * 0.5f + 0.5f, -Ndc.y * 0.5f + 0.5f);
     float CompareDepth = ReceiverDepth - ComputeShadowBias(Info, CosTheta, HalfTexelWorld);
-    return FilterShadowByMode(FaceInfo, UV, ReceiverDepth, CompareDepth, WorldPosition, true);
+    return FilterShadowByMode(LocalShadowAtlas, FaceInfo, UV, ReceiverDepth, CompareDepth, WorldPosition, true);
 }
 
 Texture2D AlbedoTexture : register(t0);

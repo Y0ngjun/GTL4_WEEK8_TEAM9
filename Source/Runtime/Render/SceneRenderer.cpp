@@ -891,11 +891,7 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     {
         if (!Slot.AtlasAllocator.Initialize(DefaultShadowAtlasSize, MinShadowAtlasTileSize)) return nullptr;
         Slot.CacheEntries.Reset();
-        Slot.DirectionalAllocations.Reset();
     }
-    for (const FShadowAtlasRect& Rect : Slot.DirectionalAllocations)
-        Slot.AtlasAllocator.Free(Rect.NodeIndex);
-    Slot.DirectionalAllocations.Reset();
 
 
     PreparingShadowViews.Reset();
@@ -1100,7 +1096,6 @@ void FSceneRenderer::ReleaseWorldShadows(uint32 ResourceIndex)
     Slot.PreparedFrame = 0;
     // GPU Atlas와 함께 버려지므로 캐시와 할당도 처음 상태로 돌린다.
     Slot.CacheEntries.Reset();
-    Slot.DirectionalAllocations.Reset();
     Slot.AtlasAllocator = FShadowAtlasAllocator{};
     Slot.bCacheActive = false;
     Slot.CachedResolution = 0;
@@ -1169,21 +1164,19 @@ uint32 FSceneRenderer::RegisterShadowMap(FShadowFrameData& Frame, uint32 LightRe
     return Frame.ShadowMapRequests.Add(MapRequest);
 }
 
-bool FSceneRenderer::AllocateShadowMaps(FShadowFrameData& Frame, uint32 ResourceIndex)
+bool FSceneRenderer::AllocateDirectionalShadowMaps(FShadowFrameData& Frame)
 {
-    if (ResourceIndex >= MaxShadowResourceSlots) return false;
-    FWorldShadowFrame& Slot = WorldShadowFrames[ResourceIndex];
-    if (Slot.PreparedFrame != FrameNumber) return false;
+    // Directional은 매 View마다 다시 그리므로 이전 View의 영역을 유지할 필요가 없다.
+    FShadowAtlasAllocator Allocator;
+    if (!Allocator.Initialize(DefaultShadowAtlasSize, MinShadowAtlasTileSize)) return false;
     Frame.ShadowAtlasSize = DefaultShadowAtlasSize;
     TArray<FShadowAtlasRect> Rects;
     for (const FShadowMapRequest& Map : Frame.ShadowMapRequests)
     {
         FShadowAtlasRect Rect;
         if (Map.ShadowInfoIndex >= Frame.ShadowInfos.Num() ||
-            !Slot.AtlasAllocator.Allocate(Map.Resolution, Rect))
+            !Allocator.Allocate(Map.Resolution, Rect))
         {
-            for (const FShadowAtlasRect& Allocated : Rects)
-                Slot.AtlasAllocator.Free(Allocated.NodeIndex);
             for (FShadowRequestPerLight& Request : Frame.ShadowRequestsPerLight)
                 Request.ShadowIndex = InvalidShadowIndex;
             Frame.CullingStats.ShadowPassesDrawn = 0;
@@ -1200,7 +1193,6 @@ bool FSceneRenderer::AllocateShadowMaps(FShadowFrameData& Frame, uint32 Resource
         Map.AtlasRect = Rect;
         Frame.ShadowInfos[Map.ShadowInfoIndex].AtlasUVScaleBias = FVector4(
             Rect.Size * InvSize, Rect.Size * InvSize, Rect.X * InvSize, Rect.Y * InvSize);
-        Slot.DirectionalAllocations.Add(Rect);
     }
     return true;
 }
