@@ -708,7 +708,7 @@ namespace
 		const FString Label = "##" + Property.Name;
 
 		ImGui::Text(Property.Name.c_str());
-		ImGui::SameLine(120.0f);
+		ImGui::SameLine(220.0f);
 		ImGui::SetNextItemWidth(-1.0f);
 
 		bool bChanged = false;

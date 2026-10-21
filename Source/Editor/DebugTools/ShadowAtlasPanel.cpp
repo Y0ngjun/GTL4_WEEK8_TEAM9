@@ -51,12 +51,26 @@ void FShadowAtlasPanel::OnRender()
 
 	const FTexture2D* Atlas = Resources->DepthAtlas.get();
 	uint32 TileCount = 0;
+	uint64 OccupiedPixels = 0;
 	for (const FShadowPreviewEntry& Entry : Resources->PreviewEntries)
+	{
 		TileCount += static_cast<uint32>(Entry.MapRects.Num());
+		for (const FShadowAtlasRect& Rect : Entry.MapRects)
+			OccupiedPixels += static_cast<uint64>(Rect.Size) * Rect.Size;
+	}
+	const uint64 AtlasPixels = static_cast<uint64>(Atlas->GetWidth()) * Atlas->GetHeight();
+	// R32_TYPELESS/D32_FLOAT 깊이 Atlas는 픽셀당 4바이트, mip 1개다.
+	constexpr double BytesPerMiB = 1024.0 * 1024.0;
+	const double AtlasMiB = static_cast<double>(AtlasPixels) * 4.0 / BytesPerMiB;
+	const double OccupiedMiB = static_cast<double>(OccupiedPixels) * 4.0 / BytesPerMiB;
+	const float Occupancy = AtlasPixels ? static_cast<float>(OccupiedPixels) / static_cast<float>(AtlasPixels) : 0.0f;
 	ImGui::Text("Atlas: %u x %u  |  Lights: %d  |  Tiles: %u",
 		Atlas->GetWidth(), Atlas->GetHeight(), Resources->PreviewEntries.Num(), TileCount);
+	ImGui::Text("Atlas GPU texture: %.1f MiB (fixed)", AtlasMiB);
+	ImGui::Text("Active coverage: %.1f%% (%.2f MiB equivalent)", Occupancy * 100.0f, OccupiedMiB);
+	ImGui::ProgressBar(std::clamp(Occupancy, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f));
 	ImGui::TextDisabled("Blue: Point  |  Orange: Spot  |  Yellow: CSM");
-	ImGui::TextDisabled("Depth: black = 0, white = 1. Old depth may remain outside outlined tiles.");
+	ImGui::TextDisabled("Depth: black = 0, white = 1");
 
 	const ImVec2 Available = ImGui::GetContentRegionAvail();
 	const float Width = std::max(1.0f, std::min(Available.x, Available.y));
