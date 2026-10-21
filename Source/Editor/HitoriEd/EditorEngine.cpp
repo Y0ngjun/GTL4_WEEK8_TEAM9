@@ -118,7 +118,8 @@ bool UEditorEngine::Init()
 
 	DepthViewRenderer = MakeUnique<FDepthViewRenderer>();
 	DepthViewRenderer->Init();
-
+	ShadowCascadeDebugRenderer = MakeUnique<FShadowCascadeDebugRenderer>();
+	ShadowCascadeDebugRenderer->Init();
 
 	// 필요한 Panel들 추가후 raw pointer 반환(소유권 = EditorUI)
 	DetailsPanel = EditorUI->AddEditorPanel<FDetailsPanel>();
@@ -1028,6 +1029,19 @@ void UEditorEngine::RenderFrame(FViewport& Viewport, UWorld& ViewWorld, const FS
 		// 4. FXAA Pass: 밝기 계산이 감마 공간을 전제로 하므로 인코딩 뒤에 한다
 		if (!bVisualizeData && SettingsPanel->GetSettings().bEnableFXAA)
 			RenderFXAAPass(Viewport.GetFxaaTarget(), ViewRenderingInfo);
+	}
+
+	// 표시용 컬러 위에 깊이 기반 Cascade 색상을 합성한다.
+	if (FShadowCascadeDebugRenderer::IsEnabled() && !View.IsOrthographic() && bDirectionalReady && !DirectionalFrame.CascadeSplits.IsEmpty())
+	{
+		FRenderingInfo PassInfo = ViewRenderingInfo;
+		for (FRenderingDesc& Color : PassInfo.ColorRenderTargets)
+			Color.LoadOp = ERenderTargetLoadOp::Load;
+		PassInfo.DepthStencil.Texture = nullptr;
+
+		RenderCommand::BeginRenderPass(PassInfo);
+		ShadowCascadeDebugRenderer->OnRender(ViewRenderingInfo.DepthStencil.Texture, View, DirectionalFrame);
+		RenderCommand::EndRenderPass(PassInfo);
 	}
 
 	// 5. 오버레이 Pass: Grid·Gizmo·UUID는 sRGB 색으로 지정되므로 인코딩 뒤 표시용 타깃에 그린다

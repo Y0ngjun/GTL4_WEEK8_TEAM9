@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Math/Frustum.h"
+#include "Containers/Array.h"
 
 // 그림자 컬링 기준. 에디터 Settings 패널에서 바꾸고 매 프레임 FSceneRenderer에 넘긴다.
 // 쉐도우 맵은 World당 한 번 그려 모든 View가 공유하므로, View에 의존하는 기준은
@@ -38,7 +39,15 @@ struct FShadowCullingView
     bool bOrthographic = false;
 };
 
-// 한 World의 마지막 준비 결과. 컬링이 실제로 동작하는지 화면에서 확인하는 용도다.
+// Cascade 하나의 caster 집계. Drawn은 Material 필터 후 depth 패킷이 남은 객체 수다.
+struct FShadowCascadeCasterStats
+{
+    uint32 CastersConsidered = 0;
+    uint32 CastersCulledBySize = 0;
+    uint32 CastersDrawn = 0;
+};
+
+// World 또는 Viewport의 마지막 준비 결과.
 struct FShadowCullingStats
 {
     // Light 단위. CastShadow가 켜진 visible Light부터 센다.
@@ -57,7 +66,11 @@ struct FShadowCullingStats
     uint32 CastersConsidered = 0;
     uint32 CastersCulledByView = 0;
     uint32 CastersCulledBySize = 0;
+    // depth draw에 제출할 패킷이 남은 객체 수. 여러 Section도 패스당 한 번 센다.
     uint32 CastersDrawn = 0;
+
+    // CSM 전용 내역. 위 총합은 Cascade마다 중복 집계된 수이며 고유 객체 수가 아니다.
+    TArray<FShadowCascadeCasterStats> CascadeCasters;
 
     // 쉐도우 맵 캐싱. 패스는 Directional/Spot 1장, Point 면 1장 단위다.
     bool bCaching = false;

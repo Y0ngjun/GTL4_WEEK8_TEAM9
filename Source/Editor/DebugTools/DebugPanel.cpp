@@ -134,11 +134,33 @@ void FDebugPanel::OnRender()
 			StatRow("Casters considered", Directional->CastersConsidered, "Counted separately for each cascade.");
 			StatRow("Shadow outside view", Directional->CastersCulledByView);
 			StatRow("Smaller than min size", Directional->CastersCulledBySize);
-			StatRow("Casters drawn", Directional->CastersDrawn);
+			StatRow("Casters drawn to shadow map", Directional->CastersDrawn, "Objects with depth draw packets after material filtering. Multiple sections count once per pass.");
 			ImGui::EndTable();
 		}
 		else if (!Directional)
 			ImGui::TextDisabled("Select a visible editor viewport with directional shadows.");
+		if (Directional && !Directional->CascadeCasters.IsEmpty())
+		{
+			ImGui::TextWrapped("Totals above include repeated casters across cascades.");
+			if (ImGui::BeginTable("##CascadeCasterStats", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg))
+			{
+				ImGui::TableSetupColumn("Cascade");
+				ImGui::TableSetupColumn("Considered");
+				ImGui::TableSetupColumn("Below min");
+				ImGui::TableSetupColumn("Drawn");
+				ImGui::TableHeadersRow();
+				for (int32 Index = 0; Index < Directional->CascadeCasters.Num(); ++Index)
+				{
+					const auto& Cascade = Directional->CascadeCasters[Index];
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0); ImGui::Text("%d", Index + 1);
+					ImGui::TableSetColumnIndex(1); ImGui::Text("%u", Cascade.CastersConsidered);
+					ImGui::TableSetColumnIndex(2); ImGui::Text("%u", Cascade.CastersCulledBySize);
+					ImGui::TableSetColumnIndex(3); ImGui::Text("%u", Cascade.CastersDrawn);
+				}
+				ImGui::EndTable();
+			}
+		}
 	}
 
 	ImGui::Spacing();

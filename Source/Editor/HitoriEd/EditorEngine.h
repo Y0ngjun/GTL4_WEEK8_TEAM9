@@ -15,6 +15,7 @@
 #include "Render/FXAARenderer.h"
 #include "Render/GammaEncodeRenderer.h"
 #include "Render/DepthViewRenderer.h"
+#include "Render/ShadowCascadeDebugRenderer.h"
 #include "Engine/GameViewportClient.h"
 #include "Render/SceneRenderer.h"
 
@@ -149,6 +150,7 @@ private:
 	TUniquePtr<FFXAARenderer> FXAARenderer;
 	TUniquePtr<FGammaEncodeRenderer> GammaEncodeRenderer;
 	TUniquePtr<FDepthViewRenderer> DepthViewRenderer;
+	TUniquePtr<FShadowCascadeDebugRenderer> ShadowCascadeDebugRenderer;
 
 	UFont* SystemFont;
 

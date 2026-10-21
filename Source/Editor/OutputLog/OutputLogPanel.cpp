@@ -2,6 +2,8 @@
 #include "Editor/OutputLog/OutputLogPanel.h"
 
 #include "Core/StatOverlay.h"
+#include "Render/ShadowCascadeDebugRenderer.h"
+#include <sstream>
 
 static int TextEditCallbackStub(ImGuiInputTextCallbackData* data)
 {
@@ -25,6 +27,7 @@ bool FOutputLogPanel::Init()
 	Commands.Add("HISTORY");
 	Commands.Add("CLEAR");
 	Commands.Add("STAT");
+	Commands.Add("ShadowCascadeDebug");
 
 	HistoryPos = -1;
 	InputBuf[0] = '\0';
@@ -165,6 +168,25 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		}
 	History.Add(CommandLine);
 
+    std::istringstream Input(CommandLine);
+    FString Command, Value, Extra;
+    Input >> Command;
+    if (EqualsIgnoreCase(Command, "ShadowCascadeDebug"))
+    {
+        if (Input >> Value)
+        {
+            if ((Value != "0" && Value != "1") || (Input >> Extra))
+            {
+                FLog::Log(ELogVerbosity::Info, "Usage: ShadowCascadeDebug <0|1>");
+                ScrollToBottom = true;
+                return;
+            }
+            FShadowCascadeDebugRenderer::SetEnabled(Value == "1");
+        }
+        FLog::Log(ELogVerbosity::Info, "ShadowCascadeDebug = {}", FShadowCascadeDebugRenderer::IsEnabled() ? 1 : 0);
+        ScrollToBottom = true;
+        return;
+    }
 	// Process command
 	// 인자를 받는 명령은 문자열 전체 비교로는 걸러지지 않으므로 먼저 위임한다.
 	FString StatMessage;
@@ -185,6 +207,7 @@ void FOutputLogPanel::ExecCommand(const FString& CommandLine)
 		for (const FString& Command : Commands)
 			FLog::Log(ELogVerbosity::Info, "- {}", Command);
 		OnLog(ELogVerbosity::Info, "- STAT <fps|memory|all|none>");
+		OnLog(ELogVerbosity::Info, "- ShadowCascadeDebug <0|1> (no argument: current value)");
 	}
 	else if (EqualsIgnoreCase(CommandLine, "HISTORY"))
 	{

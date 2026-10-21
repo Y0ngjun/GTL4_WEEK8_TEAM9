@@ -153,10 +153,10 @@
                             "Name": "UDirectionalLightComponent",
                             "Parent": "",
                             "Properties": {
-                                "CascadeBlendRatio": 0.10000000149011612,
+                                "CascadeBlendRatio": 0.4000000059604645,
                                 "CascadeCount": 4,
-                                "CascadeMaxDistance": 100.0,
                                 "CascadeDistributionExponent": 3.0,
+                                "CascadeMaxDistance": 500.0,
                                 "Intensity": 1.0,
                                 "LightColor": {
                                     "A": 255,
@@ -164,8 +164,12 @@
                                     "G": 255,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.10100000351667404,
+                                "LightSourceAngle": 0.5357000231742859,
+                                "ShadowBias": 0.20100000500679016,
+                                "ShadowFilterMode": 4,
+                                "ShadowMapResolution": 1024,
                                 "ShadowMaxSlope": 2.0,
+                                "ShadowNormalOffset": 1.899999976158142,
                                 "ShadowSlopeBias": 0.20999999344348907,
                                 "Transform": {
                                     "Location": {
@@ -185,7 +189,7 @@
                                     }
                                 },
                                 "bCastShadow": true,
-                                "bUseCSM": false,
+                                "bUseCSM": true,
                                 "bVisible": true
                             }
                         },

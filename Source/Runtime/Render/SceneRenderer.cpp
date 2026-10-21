@@ -472,22 +472,23 @@ void FSceneRenderer::BuildShadowCasterQueue(UWorld& World, FShadowDepthPassInfo&
                                             ++Stats.CastersCulledByView;
                                             return;
                                         }
-                                        // 아래 Material 필터 전 수다. 반투명만 있는 Caster도 여기서는 센다.
-                                        ++Stats.CastersDrawn;
+                                        const int32 FirstPacket = Queue.Num();
                                         Component->SubmitToRenderQueue(Queue, 0);
+                                        // 이 객체가 추가한 Section만 depth draw 기준으로 걸러낸다.
+                                        int32 Kept = FirstPacket;
+                                        for (int32 Index = FirstPacket; Index < Queue.Num(); ++Index)
+                                        {
+                                            const FRenderPacket& Packet = Queue[Index];
+                                            if (!Packet.Mesh || !Packet.Material || Packet.Material->ParamLayout != EMaterialParamLayout::StaticMesh || Packet.Material->BlendState != EBlendState::Opaque) continue;
+                                            if (Kept != Index) Queue[Kept] = Packet;
+                                            ++Kept;
+                                        }
+                                        Queue.SetNum(Kept);
+                                        // Section 수와 무관하게 depth 패킷이 남은 객체를 한 번 센다.
+                                        if (Kept > FirstPacket) ++Stats.CastersDrawn;
                                     }
                                     );
 
-    // Section 패킷의 인덱스 범위는 유지하고, 불투명 Static Mesh 이외는 제외한다.
-    int32 Kept = 0;
-    for (int32 Index = 0; Index < Queue.Num(); ++Index)
-    {
-        const FRenderPacket& Packet = Queue[Index];
-        if (!Packet.Mesh || !Packet.Material || Packet.Material->ParamLayout != EMaterialParamLayout::StaticMesh || Packet.Material->BlendState != EBlendState::Opaque) continue;
-        if (Kept != Index) Queue[Kept] = Packet;
-        ++Kept;
-    }
-    Queue.SetNum(Kept);
 }
 
 namespace
@@ -778,7 +779,15 @@ void FSceneRenderer::BuildCascadeCasterQueues(UWorld& World, uint32 RequestIndex
             // near 앞 caster도 receiver까지 그림자를 늘릴 수 있도록 장면 전체 길이를 사용한다.
             Context.ExtrudeDistance = (Bounds->Max - Bounds->Min).Size();
         }
+        FShadowCascadeCasterStats CascadeStats;
+        CascadeStats.CastersConsidered = Stats.CastersConsidered;
+        CascadeStats.CastersCulledBySize = Stats.CastersCulledBySize;
+        CascadeStats.CastersDrawn = Stats.CastersDrawn;
         BuildShadowCasterQueue(World, Pass, Context, Stats);
+        CascadeStats.CastersConsidered = Stats.CastersConsidered - CascadeStats.CastersConsidered;
+        CascadeStats.CastersCulledBySize = Stats.CastersCulledBySize - CascadeStats.CastersCulledBySize;
+        CascadeStats.CastersDrawn = Stats.CastersDrawn - CascadeStats.CastersDrawn;
+        Stats.CascadeCasters.Add(CascadeStats);
         ++Stats.ShadowPassesDrawn;
     }
 }
