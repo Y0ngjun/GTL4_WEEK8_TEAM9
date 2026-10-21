@@ -282,23 +282,32 @@ float GetShadowMapTexelUV(Texture2D<float> Atlas, FShadowInfo Info)
 #define SHADOW_FILTER_PCSS              4u
 
 // 커널 최대 반경은 탐색 반경보다 작게 유지한다.
-#define PCSS_BLOCKER_SAMPLES   16
-#define PCSS_PCF_SAMPLES       16
+#define PCSS_POISSON_SAMPLES   32
+#define PCSS_BLOCKER_SAMPLES   PCSS_POISSON_SAMPLES
+#define PCSS_PCF_SAMPLES       PCSS_POISSON_SAMPLES
 #define PCSS_MAX_SEARCH_TEXELS 12.0f
 #define PCSS_MIN_KERNEL_TEXELS 1.0f
 #define PCSS_MAX_KERNEL_TEXELS 8.0f
 
-// 반지름 1 원 안의 Poisson disk 16점 (점 사이 최소 거리 약 0.41).
-static const float2 PCSSPoissonDisk[16] =
+// 반지름 1 원 안의 Poisson disk 32점 (best-candidate, 점 사이 최소 거리 약 0.29).
+static const float2 PCSSPoissonDisk[PCSS_POISSON_SAMPLES] =
 {
-    float2( 0.3125f, -0.1937f), float2(-0.8091f, -0.5209f),
-    float2(-0.3314f, -0.3645f), float2(-0.5950f,  0.1167f),
-    float2( 0.6196f,  0.1214f), float2(-0.3294f,  0.7294f),
-    float2( 0.2102f,  0.3908f), float2( 0.4850f, -0.8015f),
-    float2( 0.7012f,  0.5625f), float2(-0.2550f, -0.9261f),
-    float2( 0.0626f,  0.9386f), float2( 0.8832f, -0.3572f),
-    float2(-0.8313f,  0.4664f), float2(-0.1259f,  0.0427f),
-    float2( 0.0987f, -0.6498f), float2(-0.9792f, -0.0342f)
+    float2( 0.1953f,  0.3565f), float2(-0.2404f, -0.9655f),
+    float2(-0.9771f,  0.0203f), float2( 0.7789f, -0.6158f),
+    float2(-0.4682f,  0.8443f), float2( 0.9551f,  0.1421f),
+    float2(-0.1268f, -0.2810f), float2(-0.8013f, -0.5628f),
+    float2( 0.4144f, -0.1527f), float2( 0.6838f,  0.7215f),
+    float2( 0.1558f,  0.9686f), float2(-0.4220f,  0.2421f),
+    float2( 0.3313f, -0.8753f), float2(-0.8538f,  0.5011f),
+    float2(-0.5856f, -0.1785f), float2( 0.5856f,  0.3310f),
+    float2(-0.1144f,  0.6157f), float2( 0.9405f, -0.2528f),
+    float2( 0.1906f, -0.5054f), float2(-0.3251f, -0.6047f),
+    float2( 0.0329f,  0.0724f), float2( 0.3885f,  0.6144f),
+    float2( 0.8763f,  0.4719f), float2(-0.1538f,  0.9795f),
+    float2(-0.9023f, -0.2747f), float2( 0.5201f, -0.4588f),
+    float2(-0.0237f, -0.7567f), float2(-0.2991f, -0.0461f),
+    float2(-0.5377f, -0.8218f), float2(-0.4563f,  0.5419f),
+    float2(-0.7367f,  0.2120f), float2(-0.1173f,  0.3213f)
 };
 
 float2 RotatePCSSSample(float2 Sample, float2 CosSin)
@@ -361,7 +370,7 @@ float FilterShadowPCSS(Texture2D<float> Atlas, FShadowInfo Info, float2 UV, floa
         Lit += SampleShadowAtlasCompare(Atlas, Info, UV + Offset, CompareDepth);
     }
     return Lit / (float)PCSS_PCF_SAMPLES;
-}
+} 
 
 // 수동 PCF. point 샘플러로 텍셀 깊이를 그대로 읽어 셰이더가 직접 비교(0/1)하고 단순 평균한다.
 // 탭은 1텍셀 간격 격자다. Radius 1 = 3x3, 2 = 5x5. 탭마다 텍셀 하나만 보므로 결과가 1/탭 수 단위 계단으로 바뀐다.
