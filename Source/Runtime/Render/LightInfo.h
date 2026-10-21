@@ -3,6 +3,9 @@
 #include "Math/Vector.h"
 
 inline constexpr uint32 MaxShadowCascades = 8;
+// 4096 Atlas를 2x2로 채우는 고정 CSM 구성. CB의 최대 배열 용량과는 별개다.
+inline constexpr uint32 ShadowCascadeCount = 4;
+inline constexpr uint32 ShadowCascadeResolution = 2048;
 
 enum class ELightType : uint8
 {
@@ -14,7 +17,7 @@ inline constexpr uint32 InvalidShadowIndex = ~0u;
 // Directional의 CPU 준비 설정. GPU 조명 상수 레이아웃에는 포함하지 않는다.
 struct FShadowCascadeSettings
 {
-    uint32 Count = 4;
+    uint32 Count = ShadowCascadeCount;
     float MaxDistance = 100.0f;
     // 인접한 Cascade 구간 길이의 비율. 1은 균등 분할.
     float DistributionExponent = 3.0f;

@@ -23,6 +23,10 @@ public:
 	FDirectionalLightInfo GetDirectionalLightInfo() const;
     FShadowCascadeSettings GetCascadeSettings() const;
     bool UsesCSM() const { return bUseCSM; }
+    uint32 GetShadowMapResolution() const override
+    {
+        return bUseCSM ? ShadowCascadeResolution : Super::GetShadowMapResolution();
+    }
     void PostEditChangeProperty(const FProperty& Property) override;
 	virtual FLightSceneProxy* CreateSceneProxy() override;
 
@@ -33,7 +37,8 @@ public:
 
 private:
     bool bUseCSM = false;
-    int32 CascadeCount = 4;
+    // 직렬화 호환용 필드. CSM 배치는 항상 4개를 사용한다.
+    int32 CascadeCount = static_cast<int32>(ShadowCascadeCount);
     float CascadeMaxDistance = 100.0f;
     float CascadeDistributionExponent = 3.0f;
     float CascadeBlendRatio = 0.1f;

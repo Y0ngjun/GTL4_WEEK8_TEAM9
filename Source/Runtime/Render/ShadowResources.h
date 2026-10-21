@@ -24,7 +24,7 @@ struct FShadowPreviewEntry
 // World 슬롯 또는 Viewport가 소유한다. World/Context 포인터는 보관하지 않는다.
 struct FShadowResources
 {
-    // World와 Viewport의 Directional 조회 자료가 같은 깊이 Atlas를 공유한다.
+    // World는 Spot/Point용, Viewport는 Directional/CSM용 Atlas를 각각 소유한다.
     TSharedPtr<FTexture2D> DepthAtlas;
     ComPtr<ID3D11Buffer> ShadowInfoBuffer;
     ComPtr<ID3D11ShaderResourceView> ShadowInfoSRV;
@@ -70,7 +70,7 @@ static_assert(offsetof(FDirectionalShadowConstants, CascadeViewOrigin) == 16);
 static_assert(offsetof(FDirectionalShadowConstants, CascadeViewForward) == 32);
 static_assert(offsetof(FDirectionalShadowConstants, CascadeDepthRanges) == 48);
 
-// 공통 깊이 맵 자원에 Viewport Directional 전용 선택 CB만 추가한다.
+// Viewport가 독립된 Directional/CSM Atlas와 Cascade 선택 CB를 소유한다.
 struct FDirectionalShadowResources : FShadowResources
 {
     TUniquePtr<FConstantBuffer> SelectionCB;
