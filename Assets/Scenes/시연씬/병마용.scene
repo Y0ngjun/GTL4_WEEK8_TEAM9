@@ -94620,11 +94620,11 @@
                                     "G": 170,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -94747,11 +94747,11 @@
                                     "G": 170,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -94874,11 +94874,11 @@
                                     "G": 200,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95001,11 +95001,11 @@
                                     "G": 225,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95128,11 +95128,11 @@
                                     "G": 170,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95255,11 +95255,11 @@
                                     "G": 225,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95382,11 +95382,11 @@
                                     "G": 225,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95509,11 +95509,11 @@
                                     "G": 170,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95636,11 +95636,11 @@
                                     "G": 200,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95763,11 +95763,11 @@
                                     "G": 170,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -95890,11 +95890,11 @@
                                     "G": 200,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -96017,11 +96017,11 @@
                                     "G": 200,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -96144,11 +96144,11 @@
                                     "G": 170,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -96271,11 +96271,11 @@
                                     "G": 225,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -96398,11 +96398,11 @@
                                     "G": 200,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
@@ -96525,11 +96525,11 @@
                                     "G": 225,
                                     "R": 255
                                 },
-                                "ShadowBias": 0.0010000000474974513,
+                                "ShadowBias": 1.0,
                                 "ShadowFilterMode": 4,
                                 "ShadowMapResolution": 256,
                                 "ShadowMaxSlope": 2.0,
-                                "ShadowNormalOffset": 0.0,
+                                "ShadowNormalOffset": 1.0,
                                 "ShadowSlopeBias": 1.0,
                                 "SourceRadius": 0.10000000149011612,
                                 "Transform": {
