@@ -52,7 +52,7 @@ public:
 
 protected:
 	bool bCastShadow = true;
-	// Point는 각 면, CSM은 각 Cascade에 적용한다.
+	// Spot/Point는 화면 비율 LOD의 최대 해상도. 비-CSM Directional은 수동, CSM은 고정 해상도다.
 	int32 ShadowMapResolution = 1024;
 	// Bias는 월드 거리 단위다.
 	// SlopeBias는 무차원 k: Slope Bias = k * (T/2) * tan(theta), T는 쉐도우 맵 텍셀의 월드 크기. k = 1이 이론상 최소값이다.

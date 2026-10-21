@@ -890,6 +890,7 @@ const FShadowFrameData* FRenderer::RenderWorldShadows(uint32 Index, UWorld& Worl
         FShadowPreviewEntry Entry;
         Entry.LightId = Request.Light->GetComponent()->GetUUID();
         Entry.bPoint = Request.Light->GetLightType() == ELightType::Point;
+        Entry.ScreenRatio = Request.ScreenRatio;
         for (const FShadowMapRequest& Map : Frame.ShadowMapRequests)
             if (Map.LightRequestIndex == LightIndex) Entry.MapRects.Add(Map.AtlasRect);
         Resources.PreviewEntries.Add(std::move(Entry));

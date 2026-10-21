@@ -130,6 +130,8 @@ void FDebugPanel::OnRender()
 		if (Directional && BeginStatTable("##DirectionalShadowStats"))
 		{
 			StatRow("Lights prepared", Directional->LightsRendered);
+			StatRow("No visible receivers", Directional->LightsCulledByNoReceiver,
+				"This viewport has no visible primitive that receives shadows.");
 			StatRow("Depth passes", Directional->ShadowPassesDrawn, "One pass per cascade in CSM. No cached passes.");
 			StatRow("Casters considered", Directional->CastersConsidered, "Counted separately for each cascade.");
 			StatRow("Shadow outside view", Directional->CastersCulledByView);
@@ -249,6 +251,8 @@ void FDebugPanel::DrawLightCullingSection(const FShadowCullingStats* Stats)
 		StatRow("Outside views", Stats->LightsCulledByView);
 		StatRow("Beyond shadow distance", Stats->LightsCulledByDistance);
 		StatRow("Too small on screen", Stats->LightsCulledByScreenSize);
+		StatRow("No visible receivers", Stats->LightsCulledByNoReceiver,
+			"No shadow-receiving primitive overlaps this light in any shadowed view.");
 		StatRow("No casters", Stats->LightsCulledByNoCaster, "Nothing left to draw after caster culling. The light keeps no shadow map slot.");
 		StatRow("Point faces culled", Stats->PointFacesCulled,
 			Stats->bCaching ? "Disabled while caching." : "Cube faces outside every view. They are cleared instead of drawn.");

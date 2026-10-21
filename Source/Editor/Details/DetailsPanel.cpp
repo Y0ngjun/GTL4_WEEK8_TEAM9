@@ -5,6 +5,7 @@
 #include "Render/RenderCommand.h"
 #include "Component/LightComponent.h"
 #include "Component/DirectionalLightComponent.h"
+#include "Component/PointLightComponent.h"
 #include <d3dcompiler.h>
 #include "imgui_internal.h"
 #include "Editor/HitoriEd/EditorDragDrop.h"
@@ -707,7 +708,7 @@ namespace
 		const FString Label = "##" + Property.Name;
 
 		ImGui::Text(Property.Name.c_str());
-		ImGui::SameLine(120.0f);
+		ImGui::SameLine(220.0f);
 		ImGui::SetNextItemWidth(-1.0f);
 
 		bool bChanged = false;
@@ -735,14 +736,19 @@ namespace
 			{
 				constexpr int Resolutions[] = { 256, 512, 1024, 2048 };
 				const char* Items[] = { "256", "512", "1024", "2048" };
+				const bool bLocal = Cast<UPointLightComponent>(Object) != nullptr;
+				const int ItemCount = bLocal ? 3 : IM_ARRAYSIZE(Items);
+				const uint32 MaxResolution = bLocal ? std::min(Light->GetShadowMapResolution(), 1024u) : Light->GetShadowMapResolution();
 				int Selected = 0;
-				for (int Index = 0; Index < IM_ARRAYSIZE(Resolutions); ++Index)
-					if (Resolutions[Index] == static_cast<int>(Light->GetShadowMapResolution())) Selected = Index;
-				if (ImGui::Combo(Label.c_str(), &Selected, Items, IM_ARRAYSIZE(Items)))
+				for (int Index = 0; Index < ItemCount; ++Index)
+					if (Resolutions[Index] == static_cast<int>(MaxResolution)) Selected = Index;
+				if (ImGui::Combo(Label.c_str(), &Selected, Items, ItemCount))
 				{
 					*static_cast<int*>(ValuePtr) = Resolutions[Selected];
 					bChanged = true;
 				}
+				if (bLocal && ImGui::IsItemHovered())
+					ImGui::SetTooltip("Maximum tile size. Screen ratio selects this size, 1/2 or 1/4 (minimum 256).");
 			}
 			else if (Property.Name == "ShadowFilterMode" && Cast<ULightComponent>(Object))
 			{
@@ -1314,6 +1320,9 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
         ImGui::SliderInt("Cascade", &PreviewCascade, 0, MapCount - 1);
     SelectedMap = std::clamp(SelectedMap, 0, MapCount - 1);
     const FShadowAtlasRect& Rect = Entry->MapRects[static_cast<uint32>(SelectedMap)];
+    ImGui::Text("Map: %u x %u", Rect.Size, Rect.Size);
+    if (Cast<UPointLightComponent>(Light))
+        ImGui::Text("Auto LOD / Screen ratio: %.3f", Entry->ScreenRatio);
     const FTexture* Source = Resources->DepthAtlas.get();
     ID3D11Device* Device = RenderCommand::GetDevice();
     ID3D11DeviceContext* Context = RenderCommand::GetContext();

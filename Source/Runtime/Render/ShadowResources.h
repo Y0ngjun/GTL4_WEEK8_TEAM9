@@ -18,6 +18,7 @@ struct FShadowPreviewEntry
 {
     uint32 LightId = 0;
     bool bPoint = false;
+    float ScreenRatio = 0.0f;
     TArray<FShadowAtlasRect> MapRects;
 };
 

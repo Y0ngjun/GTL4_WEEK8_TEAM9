@@ -16,6 +16,8 @@ struct FShadowRequestPerLight
     // 그룹의 첫 GPU 조회 정보. 면과 Cascade는 연속 등록한다.
     uint32 ShadowIndex = InvalidShadowIndex;
     uint32 ShadowMapCount = 0;
+    // Spot/Point의 자동 해상도 선택에 쓴 최대 화면 높이 비율. Directional은 사용하지 않는다.
+    float ScreenRatio = 0.0f;
 };
 
 // Map 한 장의 해상도와 Atlas 배치 결과.

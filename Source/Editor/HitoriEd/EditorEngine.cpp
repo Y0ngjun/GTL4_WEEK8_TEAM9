@@ -134,6 +134,7 @@ bool UEditorEngine::Init()
 
 	SettingsPanel = EditorUI->AddEditorPanel<FSettingsPanel>();
 	DebugPanel = EditorUI->AddEditorPanel<FDebugPanel>();
+	ShadowAtlasPanel = EditorUI->AddEditorPanel<FShadowAtlasPanel>();
 
 	//ToolbarPanel->SetPlayCallback([this]() { RequestPlaySession(); });
 	//ToolbarPanel->SetStopCallback([this]() { RequestEndPlayMap(); });
@@ -280,6 +281,27 @@ bool UEditorEngine::Init()
         const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
         return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber() ? Resources : nullptr;
     });
+	ShadowAtlasPanel->SetAtlasQuery([this](bool bDirectional, FString& SourceLabel) -> const FShadowResources*
+	{
+		if (bDirectional)
+		{
+			const int32 Index = ViewportsPanel->GetActiveViewIndex();
+			const FViewport* Viewport = ViewportsPanel->GetViewport(Index);
+			SourceLabel = "Viewport " + std::to_string(Index + 1) + " (Editor)";
+			if (!Viewport || !Viewport->IsVisible() || Viewport->GetGameClient() ||
+				!Viewport->GetActiveClient() || Viewport->GetActiveClient()->GetWorld() != EditorWorld)
+				return nullptr;
+			const FShadowResources& Resources = Viewport->GetDirectionalShadow();
+			return Resources.bDepthReady && Resources.RenderedFrame == SceneRenderer.GetFrameNumber()
+				? &Resources : nullptr;
+		}
+		SourceLabel = "Editor world (shared by viewports)";
+		const FWorldContext* Context = EditorWorld ? GetWorldContextFromWorld(EditorWorld) : nullptr;
+		if (!Context) return nullptr;
+		const FShadowResources* Resources = Renderer->GetShadowResources(Context->ShadowResourceIndex);
+		return Resources && Resources->bDepthReady && Resources->RenderedFrame == SceneRenderer.GetFrameNumber()
+			? Resources : nullptr;
+	});
 	// Debug 패널은 Settings가 소유한 그림자 설정을 직접 고치고, World별 결과를 읽는다.
 	DebugPanel->SetShadowCullingSettings(&SettingsPanel->GetMutableSettings().ShadowCulling);
 	DebugPanel->SetHasPlayWorldQuery([this]() { return PlayWorld != nullptr; });

@@ -1,0 +1,502 @@
+{
+    "Version": 4,
+    "World": {
+        "PersistentLevel": {
+            "Actors": [
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 32,
+                                        "Y": 32,
+                                        "Z": 1
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "StaticMesh": "Plane",
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "AAmbientLightActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UAmbientLightComponent",
+                            "Name": "UAmbientLightComponent",
+                            "Parent": "",
+                            "Properties": {
+                                "Intensity": 0.12,
+                                "LightColor": {
+                                    "A": 255,
+                                    "B": 255,
+                                    "G": 255,
+                                    "R": 255
+                                },
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "APointLightActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UPointLightComponent",
+                            "Name": "UPointLightComponent",
+                            "Parent": "",
+                            "Properties": {
+                                "AttenuationRadius": 5.5,
+                                "Intensity": 2,
+                                "LightColor": {
+                                    "A": 255,
+                                    "B": 155,
+                                    "G": 205,
+                                    "R": 255
+                                },
+                                "Transform": {
+                                    "Location": {
+                                        "X": -3,
+                                        "Y": 0,
+                                        "Z": 3
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true,
+                                "ShadowMapResolution": 1024,
+                                "ShadowFilterMode": 0,
+                                "ShadowBias": 0.002,
+                                "ShadowSlopeBias": 1,
+                                "ShadowMaxSlope": 2,
+                                "ShadowNormalOffset": 0,
+                                "SourceRadius": 0,
+                                "bCastShadow": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "ASpotLightActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "USpotLightComponent",
+                            "Name": "USpotLightComponent",
+                            "Parent": "",
+                            "Properties": {
+                                "AttenuationRadius": 5.5,
+                                "InnerConeAngle": 22,
+                                "Intensity": 2.4,
+                                "LightColor": {
+                                    "A": 255,
+                                    "B": 255,
+                                    "G": 210,
+                                    "R": 165
+                                },
+                                "OuterConeAngle": 38,
+                                "Transform": {
+                                    "Location": {
+                                        "X": 3,
+                                        "Y": 0,
+                                        "Z": 5.5
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 90,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true,
+                                "ShadowMapResolution": 1024,
+                                "ShadowFilterMode": 0,
+                                "ShadowBias": 0.002,
+                                "ShadowSlopeBias": 1,
+                                "ShadowMaxSlope": 2,
+                                "ShadowNormalOffset": 0,
+                                "SourceRadius": 0,
+                                "bCastShadow": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": -3,
+                                        "Y": 0,
+                                        "Z": 0.9
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1.5,
+                                        "Y": 1.5,
+                                        "Z": 1.8
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "StaticMesh": "Cube",
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": -4.5,
+                                        "Y": 1,
+                                        "Z": 0.8
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1.3,
+                                        "Y": 1.3,
+                                        "Z": 1.3
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "StaticMesh": "Sphere",
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 3,
+                                        "Y": 0,
+                                        "Z": 1
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1.6,
+                                        "Y": 1.6,
+                                        "Z": 1.6
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "StaticMesh": "Sphere",
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                },
+                {
+                    "Class": "AStaticMeshActor",
+                    "Components": [
+                        {
+                            "Class": "USceneComponent",
+                            "Name": "DefaultSceneRoot",
+                            "Parent": "",
+                            "Properties": {
+                                "Transform": {
+                                    "Location": {
+                                        "X": 4.3,
+                                        "Y": 0.5,
+                                        "Z": 0.8
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1.1,
+                                        "Y": 1.1,
+                                        "Z": 1.6
+                                    }
+                                }
+                            }
+                        },
+                        {
+                            "Class": "UStaticMeshComponent",
+                            "Name": "UStaticMeshComponent",
+                            "OverrideMaterials": [],
+                            "Parent": "DefaultSceneRoot",
+                            "Properties": {
+                                "StaticMesh": "Cube",
+                                "Transform": {
+                                    "Location": {
+                                        "X": 0,
+                                        "Y": 0,
+                                        "Z": 0
+                                    },
+                                    "Rotation": {
+                                        "Pitch": 0,
+                                        "Roll": 0,
+                                        "Yaw": 0
+                                    },
+                                    "Scale": {
+                                        "X": 1,
+                                        "Y": 1,
+                                        "Z": 1
+                                    }
+                                },
+                                "bVisible": true
+                            }
+                        }
+                    ],
+                    "Properties": {}
+                }
+            ],
+            "Properties": {}
+        },
+        "Properties": {}
+    }
+}
