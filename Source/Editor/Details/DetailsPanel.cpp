@@ -1357,4 +1357,49 @@ void FDetailsPanel::DrawShadowPreview(ULightComponent* Light)
     }, this);
     ImGui::Image((ImTextureID)PreviewSRV.Get(), ImVec2(Size, Size), UV0, UV1);
     ImGui::GetWindowDrawList()->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+
+    if (ImGui::TreeNode("Atlas Preview"))
+    {
+        ImGui::Text("Atlas: %u x %u", Source->GetWidth(), Source->GetHeight());
+        ImGui::TextDisabled("Cyan: maps of this light / Yellow: selected map");
+
+        const float AtlasWidth = static_cast<float>(Source->GetWidth());
+        const float AtlasHeight = static_cast<float>(Source->GetHeight());
+        const float DisplayWidth = std::max(1.0f, std::min(512.0f, ImGui::GetContentRegionAvail().x));
+        const ImVec2 DisplaySize(DisplayWidth, DisplayWidth * AtlasHeight / AtlasWidth);
+        ImDrawList* DrawList = ImGui::GetWindowDrawList();
+
+        // 개별 Map과 같은 복사본과 Shader로 Atlas 전체 깊이를 표시한다.
+        DrawList->AddCallback([](const ImDrawList*, const ImDrawCmd* Command)
+        {
+            auto* Panel = static_cast<FDetailsPanel*>(Command->UserCallbackData);
+            RenderCommand::GetContext()->PSSetShader(Panel->PreviewShader.Get(), nullptr, 0);
+        }, this);
+        ImGui::Image((ImTextureID)PreviewSRV.Get(), DisplaySize, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f));
+        const ImVec2 ImageMin = ImGui::GetItemRectMin();
+        const ImVec2 ImageMax = ImGui::GetItemRectMax();
+        DrawList->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+
+        const float ScaleX = DisplaySize.x / AtlasWidth;
+        const float ScaleY = DisplaySize.y / AtlasHeight;
+        auto DrawMapOutline = [&](int32 MapIndex, ImU32 Color, float Thickness)
+        {
+            const FShadowAtlasRect& MapRect = Entry->MapRects[static_cast<uint32>(MapIndex)];
+            const ImVec2 TileMin(ImageMin.x + MapRect.X * ScaleX, ImageMin.y + MapRect.Y * ScaleY);
+            const ImVec2 TileMax(ImageMin.x + (MapRect.X + MapRect.Size) * ScaleX,
+                ImageMin.y + (MapRect.Y + MapRect.Size) * ScaleY);
+            DrawList->AddRect(TileMin, TileMax, Color, 0.0f, Thickness, 0);
+        };
+
+        DrawList->PushClipRect(ImageMin, ImageMax, true);
+        for (int32 MapIndex = 0; MapIndex < MapCount; ++MapIndex)
+        {
+            if (MapIndex != SelectedMap)
+                DrawMapOutline(MapIndex, IM_COL32(0, 220, 255, 255), 1.0f);
+        }
+        // 선택 영역의 테두리를 마지막에 그려 인접 영역에 가려지지 않게 한다.
+        DrawMapOutline(SelectedMap, IM_COL32(255, 220, 0, 255), 2.0f);
+        DrawList->PopClipRect();
+        ImGui::TreePop();
+    }
 }
