@@ -36,6 +36,8 @@ struct FShadowCullingView
     FVector Location{};
     // 원근: 거리 1에서 월드 길이 1이 차지하는 픽셀 수. 직교: 월드 길이 1의 픽셀 수.
     float PixelsPerUnit = 0.0f;
+    // 픽셀 지름을 화면 높이 비율로 바꿀 때 쓴다.
+    float InvViewHeight = 0.0f;
     bool bOrthographic = false;
 };
 

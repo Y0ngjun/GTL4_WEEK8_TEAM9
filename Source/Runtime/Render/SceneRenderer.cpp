@@ -98,6 +98,48 @@ ELightViewResult TestLightAgainstViews(const FVector& Center, float Radius, cons
     return Result;
 }
 
+// 라이트 반경 / (카메라 거리 * tan(FovY/2)). 공유 Atlas이므로 View 중 최댓값을 쓴다.
+float ComputeLocalShadowScreenRatio(const FLightSceneProxy& Light, const TArray<FShadowCullingView>& Views)
+{
+    FVector Center;
+    float Radius;
+    if (Light.GetLightType() == ELightType::Spot)
+    {
+        const auto& Spot = static_cast<const FSpotLightSceneProxy&>(Light);
+        Center = Spot.GetInfo().Position;
+        Radius = Spot.GetInfo().AttenuationRadius;
+    }
+    else
+    {
+        const auto& Point = static_cast<const FPointLightSceneProxy&>(Light);
+        Center = Point.GetInfo().Position;
+        Radius = Point.GetInfo().AttenuationRadius;
+    }
+
+    float Ratio = 0.0f;
+    bool bHasValidView = false;
+    for (const FShadowCullingView& View : Views)
+    {
+        if (View.InvViewHeight <= 0.0f) continue;
+        bHasValidView = true;
+        const float Distance = (Center - View.Location).Size();
+        if (!View.bOrthographic && Distance <= Radius) return 1.0f;
+        const float DiameterRatio = 2.0f * Radius * View.PixelsPerUnit * View.InvViewHeight;
+        Ratio = std::max(Ratio, View.bOrthographic ? DiameterRatio : DiameterRatio / std::max(Distance, 1.0e-4f));
+    }
+    return bHasValidView ? std::clamp(Ratio, 0.0f, 1.0f) : 1.0f;
+}
+
+uint32 CalcShadowTileResolution(float ProjRatio, uint32 MaxResolution)
+{
+    // 에디터에서 선택한 최대 크기를 기준으로 절반씩 줄이며 최소 256을 유지한다.
+    MaxResolution = std::clamp(MaxResolution, 256u, 1024u);
+    if (ProjRatio > 0.4f) return MaxResolution;
+    if (ProjRatio > 0.2f) return std::max(MaxResolution / 2, 256u);
+    if (ProjRatio > 0.03f) return std::max(MaxResolution / 4, 256u);
+    return 0; // 최소 타일은 256. 이보다 작은 화면 비율은 그림자를 생성하지 않는다.
+}
+
 // 큐브맵 한 면이 맡는 구 영역(|y|,|z| <= x <= R)은 라이트 위치와, 거리 R 평면 위 반폭 R 사각형으로 만든 피라미드 안에 들어간다.
 bool IsPointFaceVisible(const FVector& LightPosition, float Radius, const FVector& Forward, const FVector& Right, const FVector& Up, const TArray<FShadowCullingView>& Views)
 {
@@ -203,6 +245,7 @@ void FSceneRenderer::AddShadowView(const UWorld& World, const FSceneView& View)
     CullingView.Location = View.GetCameraLocation();
     CullingView.bOrthographic = View.IsOrthographic();
     const float Height = View.ViewRect.Height;
+    CullingView.InvViewHeight = Height > 0.0f ? 1.0f / Height : 0.0f;
     if (CullingView.bOrthographic)
     {
         // 직교: 화면 높이 픽셀 / 직교 높이(월드).
@@ -805,6 +848,7 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
         CullingView.Frustum = View->Frustum;
         CullingView.Location = View->GetCameraLocation();
         CullingView.bOrthographic = View->IsOrthographic();
+        CullingView.InvViewHeight = View->ViewRect.Height > 0.0f ? 1.0f / View->ViewRect.Height : 0.0f;
         CullingView.PixelsPerUnit = 0.5f * View->ViewRect.Height * View->ProjectionMatrix.M[2][1];
         PreparingShadowViews.Add(CullingView);
     }
@@ -818,7 +862,16 @@ void FSceneRenderer::PrepareShadows(UWorld& World, FShadowFrameData& OutData, st
     {
         FShadowRequestPerLight& Request = OutData.ShadowRequestsPerLight[Index];
         const FLightSceneProxy* Light = Request.Light;
-        const uint32 Resolution = Light->GetShadowMapResolution();
+        const bool bLocal = Light->GetLightType() == ELightType::Spot || Light->GetLightType() == ELightType::Point;
+        Request.ScreenRatio = bLocal ? ComputeLocalShadowScreenRatio(*Light, PreparingShadowViews) : 0.0f;
+        const uint32 Resolution = bLocal
+            ? CalcShadowTileResolution(Request.ScreenRatio, Light->GetShadowMapResolution())
+            : Light->GetShadowMapResolution();
+        if (Resolution == 0)
+        {
+            ++Stats.LightsCulledByScreenSize;
+            continue;
+        }
         OutData.Resolution = Resolution;
         if (Light->GetLightType() == ELightType::Directional && static_cast<const FDirectionalLightSceneProxy*>(Light)->UsesCSM())
         {
@@ -947,16 +1000,30 @@ const FShadowFrameData* FSceneRenderer::PrepareWorldShadows(UWorld& World, uint3
     // 2. Light별 준비.
     for (uint32 Index = 0; Index < static_cast<uint32>(Slot.Data.ShadowRequestsPerLight.Num()); ++Index)
     {
-        const FLightSceneProxy* Light = Slot.Data.ShadowRequestsPerLight[Index].Light;
+        FShadowRequestPerLight& Request = Slot.Data.ShadowRequestsPerLight[Index];
+        const FLightSceneProxy* Light = Request.Light;
+        Request.ScreenRatio = ComputeLocalShadowScreenRatio(*Light, PreparingShadowViews);
+        const uint32 Resolution = CalcShadowTileResolution(Request.ScreenRatio, Light->GetShadowMapResolution());
+        if (Resolution == 0)
+        {
+            // 렌더 제외 시 지난 프레임에 쓰던 실제 Atlas 영역도 반환한다.
+            const uint32 LightId = Light->GetComponent()->GetUUID();
+            if (const FShadowCacheEntry* Entry = Slot.CacheEntries.Find(LightId))
+                for (const FShadowAtlasRect& Rect : Entry->AtlasRects)
+                    Slot.AtlasAllocator.Free(Rect.NodeIndex);
+            Slot.CacheEntries.Remove(LightId);
+            ++Stats.LightsCulledByScreenSize;
+            continue;
+        }
         FLightShadowSetup Setup;
         bool bValidSetup = false;
         switch (Light->GetLightType())
         {
         case ELightType::Spot:
-            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), Light->GetShadowMapResolution(), Setup);
+            bValidSetup = BuildSpotSetup(*static_cast<const FSpotLightSceneProxy*>(Light), Resolution, Setup);
             break;
         case ELightType::Point:
-            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), Light->GetShadowMapResolution(), Setup);
+            bValidSetup = BuildPointSetup(*static_cast<const FPointLightSceneProxy*>(Light), Resolution, Setup);
             break;
         default:
             break;
